@@ -1,0 +1,60 @@
+[
+  {
+    "id": "obs-001",
+    "messageId": "msg-0001",
+    "kind": "comment",
+    "text": "Первый кадр сессии всегда GET_STATUS без payload — похоже на handshake.",
+    "createdAt": "2026-03-14T12:04:11.000Z"
+  },
+  {
+    "id": "obs-002",
+    "messageId": "msg-0006",
+    "kind": "range",
+    "text": "Здесь значение параметра: 0x012C = 300, совпадает с уставкой на стенде.",
+    "range": {
+      "offset": 5,
+      "length": 4
+    },
+    "createdAt": "2026-03-14T12:09:38.000Z"
+  },
+  {
+    "id": "obs-003",
+    "messageId": "msg-0010",
+    "kind": "range",
+    "range": {
+      "offset": 3,
+      "length": 2
+    },
+    "createdAt": "2026-03-14T12:15:02.000Z"
+  },
+  {
+    "id": "obs-004",
+    "messageId": "msg-0003",
+    "kind": "hypothesis",
+    "text": "Гипотеза: старший байт payload — код события, остальные — аргументы.",
+    "hypothesis": "unchecked",
+    "createdAt": "2026-03-14T12:22:45.000Z"
+  },
+  {
+    "id": "obs-005",
+    "messageId": "msg-0028",
+    "kind": "comment",
+    "text": "Опкод 0x3C не описан моделью. Встречается только после перезагрузки устройства.",
+    "createdAt": "2026-03-14T12:31:07.000Z"
+  },
+  {
+    "id": "obs-006",
+    "messageId": "msg-0030",
+    "kind": "comment",
+    "text": "Кадр оборван: length обещает 0xFFFF байт, в потоке их нет.",
+    "createdAt": "2026-03-14T12:33:52.000Z"
+  },
+  {
+    "id": "obs-007",
+    "messageId": "msg-0031",
+    "kind": "hypothesis",
+    "text": "Гипотеза: блок 4 КиБ — это дамп памяти, а не ответ на чтение регистров.",
+    "hypothesis": "refuted",
+    "createdAt": "2026-03-14T12:41:19.000Z"
+  }
+]

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "sess-01",
+    "captureId": "cap-01",
+    "tuple": {
+      "source": {
+        "address": "192.168.10.42",
+        "port": 51044
+      },
+      "destination": {
+        "address": "192.168.10.7",
+        "port": 5000
+      }
+    },
+    "messageCount": 31,
+    "startedAt": "2026-03-14T09:12:03.114Z"
+  },
+  {
+    "id": "sess-02",
+    "captureId": "cap-01",
+    "tuple": {
+      "source": {
+        "address": "192.168.10.42",
+        "port": 51051
+      },
+      "destination": {
+        "address": "192.168.10.7",
+        "port": 5000
+      }
+    },
+    "messageCount": 1,
+    "startedAt": "2026-03-14T09:31:47.002Z"
+  },
+  {
+    "id": "sess-03",
+    "captureId": "cap-01",
+    "tuple": {
+      "source": {
+        "address": "192.168.10.11",
+        "port": 40222
+      },
+      "destination": {
+        "address": "192.168.10.7",
+        "port": 5000
+      }
+    },
+    "messageCount": 300,
+    "startedAt": "2026-03-14T11:02:19.880Z"
+  }
+]

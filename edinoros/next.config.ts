@@ -5,8 +5,10 @@ const nextConfig: NextConfig = {
   experimental: {
     agentFeedback: true,
   },
-  cacheComponents: true,
-  partialPrefetching: true,
+  output: 'export',
+  images: { unoptimized: true },
+  // cacheComponents (PPR) и partialPrefetching несовместимы с output: 'export' —
+  // сборка падает с "Invariant: PPR cannot be enabled in export mode".
   turbopack: {
     rules: {
       "*.css": {

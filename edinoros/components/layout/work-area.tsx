@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { EmptyHint } from "@/components/empty-hint";
+import { ComparePanel } from "@/components/interpretation/compare-panel";
+import { ComparePicker } from "@/components/interpretation/compare-picker";
 import { HexDump } from "@/components/hex/hex-dump";
 import { HexMinimap } from "@/components/hex/hex-minimap";
 import { ImportButton } from "@/components/import-button";
@@ -11,6 +13,7 @@ import { ReferenceChip } from "@/components/reference-chip";
 import { StatusIcon } from "@/components/status-icon";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { computeDiff, maskToRanges } from "@/src/lib/diff";
 import { formatBytes, formatClock, formatTuple } from "@/src/lib/format";
 import { useAppStore } from "@/src/store/app";
 import type { Direction, ParseStatus } from "@/src/types/domain";
@@ -55,6 +58,41 @@ export function WorkArea() {
   const setSelection = useAppStore((state) => state.setSelection);
   const setHoveredField = useAppStore((state) => state.setHoveredField);
   const saveObservation = useAppStore((state) => state.saveObservation);
+
+  const compareMessageId = useAppStore((state) => state.compareMessageId);
+  const compareBytes = useAppStore((state) => state.compareBytes);
+  const overlayOpen = useAppStore((state) => state.overlayOpen);
+  const stopCompare = useAppStore((state) => state.stopCompare);
+
+  const compareActive = compareMessageId !== null;
+
+  /**
+   * Маска отличий по байтам A — именно маска, а не список диапазонов:
+   * в HEX проверка идёт на каждый отрисованный байт, и поиск по массиву
+   * диапазонов дал бы квадратичную сложность на длинных сообщениях.
+   */
+  const diffMask = useMemo(() => {
+    if (!compareActive || !bytes || !compareBytes) return null;
+
+    const diff = computeDiff(bytes, compareBytes);
+    const mask = new Uint8Array(bytes.length);
+
+    for (const item of diff.diffBytes) {
+      if (item.offset < mask.length) mask[item.offset] = 1;
+    }
+
+    // Хвост A — тоже отличие.
+    if (diff.tail?.longer === "A") {
+      mask.fill(1, diff.tail.offsetStart);
+    }
+
+    return mask;
+  }, [compareActive, bytes, compareBytes]);
+
+  const diffRanges = useMemo(
+    () => (diffMask ? maskToRanges(diffMask) : undefined),
+    [diffMask],
+  );
 
   const hexScrollRef = useRef<HTMLDivElement>(null);
 
@@ -185,11 +223,15 @@ export function WorkArea() {
                     key={message.id}
                     bytes={bytes}
                     selection={selection}
-                    highlight={hoveredField?.range ?? null}
+                    highlight={compareActive ? null : (hoveredField?.range ?? null)}
+                    diffMask={diffMask}
                     onSelect={setSelection}
                     messageId={message.id}
                     onCreateObservation={saveObservation}
                     onShowSource={showSource}
+                    overlayOpen={overlayOpen}
+                    compareActive={compareActive}
+                    onStopCompare={stopCompare}
                     scrollRef={hexScrollRef}
                   />
                 )}
@@ -200,6 +242,7 @@ export function WorkArea() {
                   key={message.id}
                   length={message.length}
                   selection={selection}
+                  diffRanges={diffRanges}
                   scrollRef={hexScrollRef}
                 />
               ) : null}
@@ -208,20 +251,27 @@ export function WorkArea() {
 
           <section className="flex min-w-0 basis-2/5 flex-col gap-2">
             <header className="flex shrink-0 items-center">
-              <h2 className="text-sm font-medium">Интерпретация</h2>
+              <h2 className="text-sm font-medium">
+                {compareActive ? "Сравнение" : "Интерпретация"}
+              </h2>
             </header>
             <div className="min-h-0 flex-1">
-              <InterpretationPanel
-                message={message}
-                observations={observations}
-                loading={loadingObservations}
-                onSelectRange={(offset, length) =>
-                  setSelection({ offset, length })
-                }
-                onHoverField={setHoveredField}
-                hoveredFieldId={hoveredFieldId}
-              />
+              {compareActive ? (
+                <ComparePanel />
+              ) : (
+                <InterpretationPanel
+                  message={message}
+                  observations={observations}
+                  loading={loadingObservations}
+                  onSelectRange={(offset, length) =>
+                    setSelection({ offset, length })
+                  }
+                  onHoverField={setHoveredField}
+                  hoveredFieldId={hoveredFieldId}
+                />
+              )}
             </div>
+            {compareActive ? null : <ComparePicker />}
           </section>
         </div>
       )}

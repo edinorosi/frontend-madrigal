@@ -50,6 +50,19 @@ interface AppState {
   /** Поле, наведённое в интерпретации, — подсвечивается в HEX. */
   hoveredFieldId: string | null;
 
+  /** Второе сообщение для сравнения. null — сравнение не активно. */
+  compareMessageId: string | null;
+  /** Сообщение, с которым сравнение не удалось начать, — для «Повторить». */
+  compareAttemptId: string | null;
+  compareError: string | null;
+  /** Байты второго сообщения. */
+  compareBytes: Uint8Array | null;
+  compareBytesLoading: boolean;
+  compareBytesError: string | null;
+
+  /** Портальный слой Radix (Select, Popover) открыт — Esc адресован ему. */
+  overlayOpen: boolean;
+
   sidebarTab: SidebarTab;
   sidebarCollapsed: boolean;
 
@@ -68,6 +81,9 @@ interface AppState {
   /** Upsert: сохранение с существующим id правит наблюдение, иначе создаёт. */
   saveObservation: (observation: Observation) => Promise<void>;
   removeObservation: (observationId: string) => Promise<void>;
+  startCompare: (messageId: string) => Promise<void>;
+  stopCompare: () => void;
+  setOverlayOpen: (open: boolean) => void;
   setSelection: (range: ByteRange | null) => void;
   setHoveredField: (fieldId: string | null) => void;
   setSidebarTab: (tab: SidebarTab) => void;
@@ -89,6 +105,12 @@ function describeError(error: unknown): string {
  */
 let requestToken = 0;
 let importToken = 0;
+/**
+ * Отдельный счётчик для сравнения. Общий requestToken здесь трогать нельзя:
+ * кнопка «Сравнить с…» доступна, пока ещё грузятся байты A, и инкремент
+ * общего счётчика отбросил бы их ответ — HEX остался бы на скелетоне.
+ */
+let compareToken = 0;
 
 export const useAppStore = create<AppState>((set, get) => ({
   captures: [],
@@ -105,6 +127,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selection: null,
   hoveredFieldId: null,
+
+  compareMessageId: null,
+  compareAttemptId: null,
+  compareError: null,
+  compareBytes: null,
+  compareBytesLoading: false,
+  compareBytesError: null,
+
+  overlayOpen: false,
 
   sidebarTab: "sessions",
   sidebarCollapsed: false,
@@ -144,6 +175,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   async selectCapture(captureId) {
     const token = ++requestToken;
 
+    // Другая запись — сравнивать прежние сообщения больше не с чем.
+    get().stopCompare();
+
     set((state) => ({
       activeCaptureId: captureId,
       sessions: [],
@@ -181,6 +215,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   async selectSession(sessionId) {
     const token = ++requestToken;
 
+    // Сбрасываем до загрузки: иначе байты прежнего сравнения успеют мигнуть.
+    get().stopCompare();
+
     set((state) => ({
       activeSessionId: sessionId,
       messages: [],
@@ -211,8 +248,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   async selectMessage(messageId) {
     const token = ++requestToken;
 
-    const { messages, activeCaptureId } = get();
+    const { messages, activeCaptureId, activeMessageId, compareMessageId } =
+      get();
     const message = messages.find((item) => item.id === messageId);
+
+    // Второе сообщение сравнивалось именно с текущим A: при смене A
+    // сравнение теряет смысл. При повторном выборе того же A — не трогаем.
+    if (compareMessageId !== null && activeMessageId !== messageId) {
+      get().stopCompare();
+    }
 
     set({
       activeMessageId: messageId,
@@ -287,6 +331,74 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  async startCompare(messageId) {
+    const token = ++compareToken;
+
+    const { messages, sessions } = get();
+    const message = messages.find((item) => item.id === messageId);
+    if (!message) return;
+
+    const session = sessions.find((item) => item.id === message.sessionId);
+
+    // TODO: Когда бэк придёт, session.captureId должен быть всегда. Откат не нужен.
+    if (!session?.captureId) {
+      set({
+        compareMessageId: null,
+        compareAttemptId: messageId,
+        compareError: "Не удалось определить источник сообщения",
+        compareBytes: null,
+        compareBytesLoading: false,
+        compareBytesError: null,
+      });
+      return;
+    }
+
+    set({
+      compareMessageId: messageId,
+      compareAttemptId: messageId,
+      compareError: null,
+      compareBytes: null,
+      compareBytesLoading: true,
+      compareBytesError: null,
+    });
+
+    try {
+      const bytesB = await appService.getBytes(
+        session.captureId,
+        message.byteOffset,
+        message.length,
+      );
+
+      if (token !== compareToken) return;
+
+      set({ compareBytes: bytesB, compareBytesLoading: false });
+    } catch (error) {
+      if (token !== compareToken) return;
+      set({
+        compareBytes: null,
+        compareBytesLoading: false,
+        compareBytesError: describeError(error),
+      });
+    }
+  },
+
+  stopCompare() {
+    // Токен гасит ответ по байтам B, если он ещё в пути.
+    compareToken += 1;
+    set({
+      compareMessageId: null,
+      compareAttemptId: null,
+      compareError: null,
+      compareBytes: null,
+      compareBytesLoading: false,
+      compareBytesError: null,
+    });
+  },
+
+  setOverlayOpen(open) {
+    set({ overlayOpen: open });
+  },
+
   setSidebarTab(tab) {
     set({ sidebarTab: tab });
   },
@@ -348,6 +460,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       observations: [],
       selection: null,
       hoveredFieldId: null,
+      compareMessageId: null,
+      compareAttemptId: null,
+      compareError: null,
+      compareBytes: null,
+      compareBytesLoading: false,
+      compareBytesError: null,
       error: null,
       importPhase: "idle",
       importProgress: 0,

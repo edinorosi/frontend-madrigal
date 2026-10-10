@@ -47,7 +47,7 @@ const STATUS_TONE: Record<ObservationStatus, string> = {
 
 /**
  * Панель интерпретации: поля сообщения и наблюдения (§6).
- * Место под редактор правил и дифф зарезервировано, но не реализуется.
+ * Место под сравнение сообщений отдано соседнему ComparePicker, ниже панели.
  */
 export function InterpretationPanel({
   message,
@@ -208,10 +208,6 @@ export function InterpretationPanel({
             </ul>
           )}
         </section>
-
-        <p className="rounded border border-dashed border-border px-2 py-1.5 text-[10px] text-muted-foreground">
-          Здесь появятся редактор правил и дифф — место зарезервировано
-        </p>
       </div>
     </ScrollArea>
   );

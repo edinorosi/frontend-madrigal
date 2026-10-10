@@ -83,21 +83,32 @@ export function HexDump({
   bytes,
   selection,
   highlight,
+  diffMask,
   onSelect,
   messageId,
   onCreateObservation,
   onShowSource,
+  overlayOpen = false,
+  compareActive = false,
+  onStopCompare,
   scrollRef,
 }: {
   bytes: Uint8Array;
   selection: ByteRange | null;
   /** Диапазон поля, наведённого в интерпретации. */
   highlight: ByteRange | null;
+  /** Маска отличий для режима сравнения: 1 — байт отличается. */
+  diffMask?: Uint8Array | null;
   onSelect: (range: ByteRange | null) => void;
   messageId: string;
   onCreateObservation: (observation: Observation) => Promise<void>;
   /** Заглушка «показать в пакете-источнике»: подсветить ссылку в шапке. */
   onShowSource?: () => void;
+  /** Открыт портальный слой Radix (Select, Popover) — Esc адресован ему. */
+  overlayOpen?: boolean;
+  /** Активно сравнение — Esc закрывает его раньше, чем снимает выделение. */
+  compareActive?: boolean;
+  onStopCompare?: () => void;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const anchorRef = useRef<number | null>(null);
@@ -175,10 +186,13 @@ export function HexDump({
     return () => scrollEl.removeEventListener("scroll", onScroll);
   }, [scrollRef]);
 
-  // Esc каскадом: меню → панель (закрывает себя сама) → выделение.
+  // Esc каскадом: портал Radix → ПКМ-меню → панель → сравнение → выделение.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+
+      // Открытый Popover или Select закроется сам, ему и адресован Esc.
+      if (overlayOpen) return;
 
       if (menu) {
         setMenu(null);
@@ -187,6 +201,12 @@ export function HexDump({
       // Панель закрывается своим обработчиком: у неё может быть открыт вложенный
       // список, которому Esc и адресован. Здесь важно лишь не тронуть выделение.
       if (panel) return;
+
+      if (compareActive) {
+        onStopCompare?.();
+        return;
+      }
+
       if (selection) {
         onSelect(null);
       }
@@ -194,7 +214,15 @@ export function HexDump({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [menu, panel, selection, onSelect]);
+  }, [
+    overlayOpen,
+    menu,
+    panel,
+    compareActive,
+    onStopCompare,
+    selection,
+    onSelect,
+  ]);
 
   useEffect(
     () => () => {
@@ -644,6 +672,7 @@ export function HexDump({
                     const selected = rangeHasIndex(selection, index);
                     const highlighted = rangeHasIndex(highlight, index);
                     const targeted = contextByte === index;
+                    const diffed = diffMask?.[index] === 1;
 
                     return (
                       <span
@@ -659,8 +688,12 @@ export function HexDump({
                           "w-[1.35rem] shrink-0 cursor-default text-center",
                           !exists && "opacity-0",
                           selected && "bg-primary/30 text-foreground",
-                          !selected && highlighted && "bg-warn/25",
-                          !selected && !highlighted && "hover:bg-muted",
+                          !selected && diffed && "bg-diff/40",
+                          !selected && !diffed && highlighted && "bg-warn/25",
+                          !selected &&
+                            !diffed &&
+                            !highlighted &&
+                            "hover:bg-muted",
                           targeted && "bg-primary/20 ring-1 ring-primary",
                         )}
                       >
@@ -677,6 +710,7 @@ export function HexDump({
                     const selected = rangeHasIndex(selection, index);
                     const highlighted = rangeHasIndex(highlight, index);
                     const targeted = contextByte === index;
+                    const diffed = diffMask?.[index] === 1;
 
                     return (
                       <span
@@ -691,7 +725,8 @@ export function HexDump({
                           "w-[0.62rem] shrink-0 text-center text-muted-foreground",
                           !exists && "opacity-0",
                           selected && "bg-primary/30 text-foreground",
-                          !selected && highlighted && "bg-warn/25",
+                          !selected && diffed && "bg-diff/40",
+                          !selected && !diffed && highlighted && "bg-warn/25",
                           targeted && "bg-primary/20 ring-1 ring-primary",
                         )}
                       >

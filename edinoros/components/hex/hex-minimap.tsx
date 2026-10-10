@@ -46,11 +46,14 @@ function scrollToRatio(
 export function HexMinimap({
   length,
   selection,
+  diffRanges,
   scrollRef,
   className,
 }: {
   length: number;
   selection: ByteRange | null;
+  /** Отрезки отличий — показываются в режиме сравнения. */
+  diffRanges?: ByteRange[];
   scrollRef: RefObject<HTMLDivElement | null>;
   className?: string;
 }) {
@@ -204,6 +207,17 @@ export function HexMinimap({
           ref={viewportRef}
           className="absolute right-0 left-0 border-y border-foreground/25 bg-foreground/15"
         />
+
+        {diffRanges?.map((range) => (
+          <div
+            key={`diff-${range.offset}`}
+            className="absolute right-0 left-0 bg-diff"
+            style={{
+              top: `${(range.offset / length) * 100}%`,
+              height: `max(${(range.length / length) * 100}%, 2px)`,
+            }}
+          />
+        ))}
 
         {selection ? (
           <div

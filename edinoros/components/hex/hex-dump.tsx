@@ -35,6 +35,7 @@ import {
   formatOffset,
   rangeBetween,
   rangeHasIndex,
+  toHexText,
 } from "@/src/lib/hex";
 import type { ByteRange, Observation } from "@/src/types/domain";
 
@@ -65,13 +66,6 @@ interface MenuState {
   containerHeight: number;
 }
 
-function toHexText(bytes: Uint8Array, range: ByteRange): string {
-  const slice = bytes.subarray(range.offset, range.offset + range.length);
-  return Array.from(slice, (value) =>
-    value.toString(16).padStart(2, "0").toUpperCase(),
-  ).join(" ");
-}
-
 /**
  * HEX-дамп: смещение, 16 байт hex, ASCII. Виртуализирован — сообщения до 64 КиБ.
  *
@@ -89,6 +83,8 @@ export function HexDump({
   onCreateObservation,
   onShowSource,
   overlayOpen = false,
+  checkActive = false,
+  onStopCheck,
   compareActive = false,
   onStopCompare,
   scrollRef,
@@ -106,6 +102,9 @@ export function HexDump({
   onShowSource?: () => void;
   /** Открыт портальный слой Radix (Select, Popover) — Esc адресован ему. */
   overlayOpen?: boolean;
+  /** Открыта панель «Проверка» — Esc закрывает её раньше сравнения. */
+  checkActive?: boolean;
+  onStopCheck?: () => void;
   /** Активно сравнение — Esc закрывает его раньше, чем снимает выделение. */
   compareActive?: boolean;
   onStopCompare?: () => void;
@@ -186,7 +185,7 @@ export function HexDump({
     return () => scrollEl.removeEventListener("scroll", onScroll);
   }, [scrollRef]);
 
-  // Esc каскадом: портал Radix → ПКМ-меню → панель → сравнение → выделение.
+  // Esc каскадом: портал Radix → ПКМ-меню → панель → «Проверка» → сравнение → выделение.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -201,6 +200,11 @@ export function HexDump({
       // Панель закрывается своим обработчиком: у неё может быть открыт вложенный
       // список, которому Esc и адресован. Здесь важно лишь не тронуть выделение.
       if (panel) return;
+
+      if (checkActive) {
+        onStopCheck?.();
+        return;
+      }
 
       if (compareActive) {
         onStopCompare?.();
@@ -218,6 +222,8 @@ export function HexDump({
     overlayOpen,
     menu,
     panel,
+    checkActive,
+    onStopCheck,
     compareActive,
     onStopCompare,
     selection,

@@ -5,6 +5,7 @@
  * Мок намеренно ведёт себя как сервер: асинхронно, с задержкой и с ошибками.
  * Байты отдаются по смещению в байтовом потоке записи — как их отдаст бэкенд.
  */
+import actionsJson from "@/src/mocks/actions.json";
 import capturesJson from "@/src/mocks/captures.json";
 import messagesJson from "@/src/mocks/messages.json";
 import observationsJson from "@/src/mocks/observations.json";
@@ -12,7 +13,10 @@ import sessionsJson from "@/src/mocks/sessions.json";
 import type { AppService } from "@/src/services/appService";
 import { readMockSettings, recordImportedCapture } from "@/src/services/mock/scenarios";
 import type {
+  Action,
   Capture,
+  CheckResult,
+  CheckRow,
   Direction,
   Message,
   Observation,
@@ -34,6 +38,9 @@ const fixtures = messagesJson as unknown as MessageFixture[];
 const messages: Message[] = fixtures;
 
 let observations: Observation[] = [...(observationsJson as unknown as Observation[])];
+
+/** Журнал действий оператора (R4). В моках он один на запись. */
+const actions: Action[] = actionsJson as unknown as Action[];
 
 const captureBytes = buildCaptureBytes(fixtures);
 
@@ -165,4 +172,91 @@ export const mockService: AppService = {
     await delay(latencyMs);
     return observations.filter((item) => item.messageId === messageId);
   },
+
+  async listActions(captureId: string) {
+    const { scenario, latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    // captureId нужен бэку; в моке журнал один на запись, а в сценарии
+    // «empty» записей нет вообще — значит и журнала нет.
+    if (scenario === "empty" || captureId === "") return [];
+    return actions;
+  },
+
+  async checkModel(captureId: string) {
+    // modelId: в моках одна модель, параметр берётся для будущего бэка.
+    const { scenario, latencyMs } = readMockSettings();
+    await delay(latencyMs);
+
+    const journal = scenario === "empty" || captureId === "" ? [] : actions;
+    const rows: CheckRow[] = journal.map((action, index) => {
+      const rowId = `chk-${String(index + 1).padStart(3, "0")}`;
+      const base = {
+        id: rowId,
+        actionId: action.id,
+        time: action.timestamp,
+        action: action.description,
+        expected: action.value,
+      };
+
+      const message = action.expectedMessageId
+        ? messages.find((item) => item.id === action.expectedMessageId)
+        : undefined;
+
+      if (!message) {
+        return { ...base, extracted: "—", status: "unknown" as const, messageId: action.expectedMessageId };
+      }
+      if (message.status !== "parsed") {
+        return { ...base, extracted: "—", status: "unknown" as const, messageId: message.id };
+      }
+      if (action.value === null) {
+        // Действие без значения: кадр разобран — сопоставлять нечего.
+        return { ...base, extracted: "—", status: "ok" as const, messageId: message.id };
+      }
+
+      const extracted = extractValue(message);
+      if (extracted === null) {
+        return { ...base, extracted: "—", status: "unknown" as const, messageId: message.id };
+      }
+      return {
+        ...base,
+        extracted: `0x${extracted.toString(16).toUpperCase().padStart(2, "0")} (${extracted})`,
+        status: extracted === action.value ? ("ok" as const) : ("error" as const),
+        messageId: message.id,
+      };
+    });
+
+    const summary = {
+      total: rows.length,
+      ok: rows.filter((row) => row.status === "ok").length,
+      unknown: rows.filter((row) => row.status === "unknown").length,
+      error: rows.filter((row) => row.status === "error").length,
+    };
+
+    return { rows, summary };
+  },
 };
+
+/**
+ * Извлечение значения из байт сообщения — мок имитирует работу модели на бэке.
+ * Кадр: AA 55 | opcode(1) | length(2 BE) | payload | crc16(2 BE).
+ * SET_PARAM: u16be первых двух байт payload; WRITE_PARAM: второй байт payload.
+ * Для прочих опкодов извлечение неизвестно — null, строка станет «не проверено».
+ */
+function extractValue(message: Message): number | null {
+  const bytes = captureBytes.slice(message.byteOffset, message.byteOffset + message.length);
+  if (bytes.length < 5 || bytes[0] !== 0xaa || bytes[1] !== 0x55) return null;
+
+  const opcode = bytes[2];
+  const length = (bytes[3] << 8) | bytes[4];
+  const payload = bytes.slice(5, 5 + length);
+  if (payload.length < 2) return null;
+
+  switch (opcode) {
+    case 0x02:
+      return (payload[0] << 8) | payload[1];
+    case 0x04:
+      return payload[1];
+    default:
+      return null;
+  }
+}

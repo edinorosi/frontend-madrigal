@@ -1,5 +1,7 @@
 import type {
+  Action,
   Capture,
+  CheckResult,
   Direction,
   Message,
   Observation,
@@ -40,4 +42,19 @@ export interface AppService {
    */
   removeObservation(id: string): Promise<void>;
   listObservations(messageId: string): Promise<Observation[]>;
+
+  /**
+   * Журнал действий оператора для записи (R4). Отклонение от §12,
+   * согласованное отдельно: журнал — исходные данные исследования,
+   * без него «Проверка» не имеет смысла.
+   * TODO: реализация на бэке ожидается, мок готов.
+   */
+  listActions(captureId: string): Promise<Action[]>;
+  /**
+   * Прогон модели по журналу действий: извлекает значения из разобранных
+   * сообщений и сопоставляет с журналом. `modelId` — пока необязательный,
+   * в моках одна модель.
+   * TODO: реализация на бэке ожидается, мок готов.
+   */
+  checkModel(captureId: string, modelId?: string): Promise<CheckResult>;
 }

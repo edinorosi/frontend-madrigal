@@ -1,11 +1,27 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import {
+  ArrowLeftRight,
+  Copy,
+  FileSearch,
+  FolderOpen,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EmptyHint } from "@/components/empty-hint";
-import { StatusIcon } from "@/components/status-icon";
+import {
+  HexContextMenu,
+  type HexContextMenuItem,
+} from "@/components/hex/hex-context-menu";
+import { MessageRow } from "@/components/sidebar/message-row";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -15,35 +31,47 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatClock } from "@/src/lib/format";
+import { formatClock, formatBytes } from "@/src/lib/format";
+import { toHexText } from "@/src/lib/hex";
 import { useAppStore } from "@/src/store/app";
-import type { Direction, MessageRole, ParseStatus } from "@/src/types/domain";
+import type { Direction, Message, ParseStatus } from "@/src/types/domain";
 
 const ROW_HEIGHT = 52;
+/** Сколько держать обратную связь в меню перед закрытием. */
+const NOTICE_MS = 700;
 
-const ROLE_TONE: Record<MessageRole, string> = {
-  REQ: "bg-primary/10 text-primary",
-  RSP: "bg-muted text-muted-foreground",
-  NOTIFY: "bg-warn/15 text-warn",
-};
+interface MenuState {
+  messageId: string;
+  x: number;
+  y: number;
+  containerWidth: number;
+  containerHeight: number;
+}
 
-const ROLE_TITLE: Record<MessageRole, string> = {
-  REQ: "Запрос",
-  RSP: "Ответ",
-  NOTIFY: "Уведомление",
-};
-
-/** Список сообщений выбранной сессии (§5). Виртуализирован: сообщений бывают сотни. */
+/**
+ * Список сообщений выбранной сессии (§5). Виртуализирован: сообщений бывают сотни.
+ * ПКМ по сообщению: сравнить, открыть, скопировать, показать пакет.
+ */
 export function MessageList() {
   const messages = useAppStore((state) => state.messages);
   const activeMessageId = useAppStore((state) => state.activeMessageId);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const loading = useAppStore((state) => state.loading.messages);
   const selectMessage = useAppStore((state) => state.selectMessage);
+  const startCompare = useAppStore((state) => state.startCompare);
+  const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
+  const pulseSource = useAppStore((state) => state.pulseSource);
+  const getMessageBytes = useAppStore((state) => state.getMessageBytes);
+  const bytesA = useAppStore((state) => state.bytes);
+  const bytesALoading = useAppStore((state) => state.loading.bytes);
 
   const [query, setQuery] = useState("");
   const [direction, setDirection] = useState<"all" | Direction>("all");
   const [status, setStatus] = useState<"all" | ParseStatus>("all");
+
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [menuNotice, setMenuNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -63,6 +91,174 @@ export function MessageList() {
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
+
+  const closeMenu = useCallback(() => {
+    setMenuNotice(null);
+    setMenu(null);
+    setOverlayOpen(false);
+  }, [setOverlayOpen]);
+
+  const showNotice = useCallback(
+    (text: string) => {
+      setMenuNotice(text);
+
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+
+      noticeTimerRef.current = window.setTimeout(() => {
+        setMenuNotice(null);
+        setMenu(null);
+        setOverlayOpen(false);
+      }, NOTICE_MS);
+    },
+    [setOverlayOpen],
+  );
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  // Esc закрывает ПКМ: hex-dump при этом пропускает клавишу — меню держит overlayOpen.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (menu) closeMenu();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [menu, closeMenu]);
+
+  const copyMessageHex = useCallback(
+    async (message: Message) => {
+      if (!navigator.clipboard) {
+        showNotice("Буфер обмена недоступен");
+        return;
+      }
+
+      try {
+        const bytes = await getMessageBytes(message.id);
+        await navigator.clipboard.writeText(toHexText(bytes));
+        showNotice(`Скопировано: ${bytes.length} байт`);
+      } catch {
+        showNotice("Не удалось скопировать");
+      }
+    },
+    [getMessageBytes, showNotice],
+  );
+
+  const menuItems = useMemo<HexContextMenuItem[]>(() => {
+    if (!menu) return [];
+
+    const target = messages.find((item) => item.id === menu.messageId);
+    if (!target) return [];
+
+    const items: HexContextMenuItem[] = [];
+
+    // «Сравнить с текущим» — та же логика, что у кнопки «Сравнить с…»,
+    // но точка входа обратная: сообщение из меню — B, текущий A — из стора.
+    const canCompare =
+      messages.length > 1 &&
+      activeMessageId !== null &&
+      target.id !== activeMessageId &&
+      bytesA !== null &&
+      !bytesALoading;
+
+    if (canCompare) {
+      items.push({
+        id: "compare",
+        label: "Сравнить с текущим",
+        icon: ArrowLeftRight,
+        onSelect: () => {
+          closeMenu();
+          void startCompare(target.id);
+        },
+      });
+    }
+
+    if (target.id !== activeMessageId) {
+      items.push({
+        id: "open",
+        label: "Открыть",
+        icon: FolderOpen,
+        onSelect: () => {
+          closeMenu();
+          void selectMessage(target.id);
+        },
+      });
+    }
+
+    items.push({
+      id: "copy",
+      label: "Копировать как hex",
+      icon: Copy,
+      onSelect: () => void copyMessageHex(target),
+    });
+
+    items.push({
+      id: "source",
+      label: "Показать в пакете",
+      icon: FileSearch,
+      onSelect: () => {
+        closeMenu();
+        // Чип в шапке показывает номер активного сообщения: для чужого
+        // сначала открываем его, чтобы пульс вёл на нужный пакет.
+        if (target.id === activeMessageId) {
+          pulseSource();
+        } else {
+          void selectMessage(target.id).then(() => pulseSource());
+        }
+      },
+    });
+
+    return items;
+  }, [
+    menu,
+    messages,
+    activeMessageId,
+    bytesA,
+    bytesALoading,
+    closeMenu,
+    startCompare,
+    selectMessage,
+    copyMessageHex,
+    pulseSource,
+  ]);
+
+  const handleContextMenu = useCallback(
+    (event: ReactMouseEvent) => {
+      // Клик правой кнопкой вне строки — не показываем и системное меню не оставляем.
+      event.preventDefault();
+
+      const target = (event.target as HTMLElement).closest<HTMLElement>(
+        "[data-message-id]",
+      );
+      const messageId = target?.dataset.messageId;
+      if (!messageId) return;
+
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+
+      const rect = scrollEl.getBoundingClientRect();
+
+      setMenuNotice(null);
+      setOverlayOpen(true);
+      setMenu({
+        messageId,
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+        containerWidth: scrollEl.clientWidth,
+        containerHeight: scrollEl.clientHeight,
+      });
+    },
+    [setOverlayOpen],
+  );
 
   if (loading) {
     return (
@@ -126,72 +322,64 @@ export function MessageList() {
       {filtered.length === 0 ? (
         <EmptyHint>Ничего не найдено по текущему фильтру</EmptyHint>
       ) : (
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+        <div className="relative min-h-0 flex-1">
           <div
-            className="relative w-full"
-            style={{ height: virtualizer.getTotalSize() }}
+            ref={scrollRef}
+            onContextMenu={handleContextMenu}
+            className="h-full overflow-auto"
           >
-            {virtualizer.getVirtualItems().map((row) => {
-              const message = filtered[row.index];
-              const active = message.id === activeMessageId;
-              const isRequest = message.direction === "request";
+            <div
+              className="relative w-full"
+              style={{ height: virtualizer.getTotalSize() }}
+            >
+              {virtualizer.getVirtualItems().map((row) => {
+                const message = filtered[row.index];
+                const active = message.id === activeMessageId;
 
-              return (
-                <button
-                  key={row.key}
-                  type="button"
-                  onClick={() => void selectMessage(message.id)}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    height: row.size,
-                    transform: `translateY(${row.start}px)`,
-                  }}
-                  className={cn(
-                    "flex flex-col justify-center gap-1 border-b border-border/60 px-2.5 text-left",
-                    "transition-colors hover:bg-sidebar-accent",
-                    active && "bg-sidebar-accent",
-                  )}
-                >
-                  <div className="flex items-center gap-1.5">
-                    {isRequest ? (
-                      <ArrowRight
-                        className="size-3 shrink-0 text-muted-foreground"
-                        aria-label="Запрос"
-                      />
-                    ) : (
-                      <ArrowLeft
-                        className="size-3 shrink-0 text-muted-foreground"
-                        aria-label="Ответ"
-                      />
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    data-message-id={message.id}
+                    onClick={() => void selectMessage(message.id)}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: row.size,
+                      transform: `translateY(${row.start}px)`,
+                    }}
+                    className={cn(
+                      "flex flex-col justify-center gap-1 border-b border-border/60 px-2.5 text-left",
+                      "transition-colors hover:bg-sidebar-accent",
+                      active && "bg-sidebar-accent",
                     )}
-                    <span
-                      title={ROLE_TITLE[message.role]}
-                      className={cn(
-                        "shrink-0 rounded px-1 py-px font-mono text-[9px] leading-tight",
-                        ROLE_TONE[message.role],
-                      )}
-                    >
-                      {message.role}
-                    </span>
-                    <span className="truncate font-mono text-[11px]">
-                      {message.label}
-                    </span>
-                    <StatusIcon status={message.status} className="ml-auto" />
-                  </div>
+                  >
+                    <MessageRow message={message} />
 
-                  <div className="flex items-center justify-between pl-4.5 text-[10px] text-muted-foreground">
-                    <span className="font-mono">{message.length} Б</span>
-                    <span className="font-mono">
-                      {formatClock(message.timestamp)}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
+                    <div className="flex items-center justify-between pl-8 text-[10px] text-muted-foreground">
+                      <span className="font-mono">{formatBytes(message.length)}</span>
+                      <span className="font-mono">
+                        {formatClock(message.timestamp)}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
+          {menu ? (
+            <HexContextMenu
+              position={{ x: menu.x, y: menu.y }}
+              containerWidth={menu.containerWidth}
+              containerHeight={menu.containerHeight}
+              items={menuItems}
+              notice={menuNotice}
+              onClose={closeMenu}
+            />
+          ) : null}
         </div>
       )}
     </div>

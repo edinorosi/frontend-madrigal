@@ -121,3 +121,52 @@ export interface Observation {
   hypothesis?: HypothesisStatus;
   createdAt: string;
 }
+
+/**
+ * Действие оператора из журнала кейса (R4).
+ * Журнал — исходные данные исследования: условия эксперимента.
+ */
+export interface Action {
+  id: string;
+  /** Время действия в журнале, "HH:MM:SS". */
+  timestamp: string;
+  /** Код действия: SET_PARAM, READ_PARAM, GET_MEASURE. */
+  name: string;
+  /** Человекочитаемое описание: «Установить 25°C». */
+  description: string;
+  /** Заданное значение, если действие его устанавливает. */
+  value: number | null;
+  /** Связанное сообщение обмена, если журнал его знает. */
+  expectedMessageId: string | null;
+}
+
+/** Итог строки проверки модели. */
+export type CheckStatus = "ok" | "unknown" | "error";
+
+/** Строка проверки: одно действие журнала сопоставлено с разбором. */
+export interface CheckRow {
+  id: string;
+  actionId: string;
+  time: string;
+  action: string;
+  /**
+   * Ожидаемое значение из журнала (Action.value) — колонка «Ожидалось».
+   * null — действию значение не задано.
+   */
+  expected: number | null;
+  /** Что извлекла модель: «0x19 (25)» — колонка «Извлечено». */
+  extracted: string;
+  status: CheckStatus;
+  messageId: string | null;
+}
+
+/** Результат прогона модели по журналу действий. */
+export interface CheckResult {
+  rows: CheckRow[];
+  summary: {
+    total: number;
+    ok: number;
+    unknown: number;
+    error: number;
+  };
+}

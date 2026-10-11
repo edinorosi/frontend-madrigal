@@ -14,28 +14,16 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { MessageRow } from "@/components/sidebar/message-row";
 import { useAppStore } from "@/src/store/app";
-import type { Direction, Message, ParseStatus } from "@/src/types/domain";
-
-const DIRECTION_MARK: Record<Direction, string> = {
-  request: "→",
-  response: "←",
-};
-
-const STATUS_MARK: Record<ParseStatus, string> = {
-  parsed: "✓",
-  unknown: "?",
-  error: "✗",
-};
+import type { Message } from "@/src/types/domain";
 
 /**
- * Подпись сообщения в списке выбора: №31 · → · GET_STATUS · ✓
- * Направление и статус — обычным текстом, без бейджей и цвета.
+ * Строка для поиска в Command: №31 GET_STATUS — по номеру и метке.
+ * Визуал строки — MessageRow, как в sidebar.
  */
-function messageCaption(message: Message): string {
-  const direction = DIRECTION_MARK[message.direction];
-  const status = STATUS_MARK[message.status];
-  return `№${message.packetNumber} · ${direction} · ${message.label} · ${status}`;
+function messageSearchValue(message: Message): string {
+  return `№${message.packetNumber} ${message.label}`;
 }
 
 /**
@@ -106,19 +94,19 @@ export function ComparePicker() {
       }}
     >
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="w-full shrink-0">
+        <Button variant="outline" size="sm" className="flex-1">
           Сравнить с…
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(20rem,90vw)] p-0">
         <Command>
-          <CommandInput placeholder="Поиск сообщения" />
+          <CommandInput placeholder="Поиск по номеру или метке" />
           <CommandList>
             <CommandEmpty>Ничего не найдено</CommandEmpty>
             {messages.map((message) => (
               <CommandItem
                 key={message.id}
-                value={messageCaption(message)}
+                value={messageSearchValue(message)}
                 disabled={message.id === activeMessageId}
                 onSelect={() => {
                   setOpen(false);
@@ -126,7 +114,7 @@ export function ComparePicker() {
                   void startCompare(message.id);
                 }}
               >
-                <span className="truncate">{messageCaption(message)}</span>
+                <MessageRow message={message} className="w-full" />
               </CommandItem>
             ))}
           </CommandList>

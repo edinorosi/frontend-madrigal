@@ -10,6 +10,7 @@ import { appService } from "@/src/services";
 import type {
   ByteRange,
   Capture,
+  CheckResult,
   Message,
   Observation,
   Session,
@@ -60,8 +61,25 @@ interface AppState {
   compareBytesLoading: boolean;
   compareBytesError: string | null;
 
+  /** Панель «Проверка» (R4) открыта. */
+  checkOpen: boolean;
+  checkResult: CheckResult | null;
+  checkLoading: boolean;
+  checkError: string | null;
+  /**
+   * Действий в журнале текущей записи. null — ещё не известно.
+   * Кнопка «Проверка» рендерится только при журнале > 0.
+   */
+  journalCount: number | null;
+
   /** Портальный слой Radix (Select, Popover) открыт — Esc адресован ему. */
   overlayOpen: boolean;
+
+  /**
+   * Тик для заглушки «показать в пакете»: work-area ловит изменение
+   * и подсвечивает ссылку на пакет в шапке.
+   */
+  sourcePulseTick: number;
 
   sidebarTab: SidebarTab;
   sidebarCollapsed: boolean;
@@ -83,7 +101,19 @@ interface AppState {
   removeObservation: (observationId: string) => Promise<void>;
   startCompare: (messageId: string) => Promise<void>;
   stopCompare: () => void;
+  openCheck: () => Promise<void>;
+  closeCheck: () => void;
+  runCheck: () => Promise<void>;
+  /**
+   * Переход к байтам сообщения из строки «Проверки». Если сообщение в другой
+   * сессии — сначала переключает на неё.
+   */
+  gotoMessage: (messageId: string) => Promise<void>;
   setOverlayOpen: (open: boolean) => void;
+  /** Заглушка «показать в пакете»: пульс ссылки в шапке work-area. */
+  pulseSource: () => void;
+  /** Байты сообщения по id — для копирования из ПКМ sidebar. */
+  getMessageBytes: (messageId: string) => Promise<Uint8Array>;
   setSelection: (range: ByteRange | null) => void;
   setHoveredField: (fieldId: string | null) => void;
   setSidebarTab: (tab: SidebarTab) => void;
@@ -111,6 +141,8 @@ let importToken = 0;
  * общего счётчика отбросил бы их ответ — HEX остался бы на скелетоне.
  */
 let compareToken = 0;
+/** Отдельный счётчик для «Проверки» — та же причина, что у сравнения. */
+let checkToken = 0;
 
 export const useAppStore = create<AppState>((set, get) => ({
   captures: [],
@@ -135,7 +167,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   compareBytesLoading: false,
   compareBytesError: null,
 
+  checkOpen: false,
+  checkResult: null,
+  checkLoading: false,
+  checkError: null,
+  journalCount: null,
+
   overlayOpen: false,
+
+  sourcePulseTick: 0,
 
   sidebarTab: "sessions",
   sidebarCollapsed: false,
@@ -177,6 +217,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Другая запись — сравнивать прежние сообщения больше не с чем.
     get().stopCompare();
+    // Проверка относится к прежней записи — закрываем.
+    get().closeCheck();
 
     set((state) => ({
       activeCaptureId: captureId,
@@ -187,15 +229,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       bytes: null,
       observations: [],
       selection: null,
+      checkResult: null,
+      checkError: null,
+      journalCount: null,
       loading: { ...state.loading, sessions: true },
     }));
 
     try {
-      const sessions = await appService.listSessions(captureId);
+      // Журнал параллельно с сессиями: он решает, показывать ли кнопку
+      // «Проверка». Его сбой не должен ронять просмотр записи.
+      const [sessions, actions] = await Promise.all([
+        appService.listSessions(captureId),
+        appService.listActions(captureId).catch(() => []),
+      ]);
       if (token !== requestToken) return;
 
       set((state) => ({
         sessions,
+        journalCount: actions.length,
         loading: { ...state.loading, sessions: false },
       }));
 
@@ -395,8 +446,80 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  async openCheck() {
+    // Проверять нечего — не открываем (кнопка при этом не рендерится).
+    if (get().journalCount === 0) return;
+
+    set({ checkOpen: true });
+    // Первое открытие сразу запускает проверку; повторное открывает прошлый
+    // результат — перезапуск живёт отдельно (ошибка сети и «Повторить»).
+    if (get().checkResult === null && get().checkError === null) {
+      await get().runCheck();
+    }
+  },
+
+  closeCheck() {
+    set({ checkOpen: false });
+  },
+
+  async runCheck() {
+    const token = ++checkToken;
+    const { activeCaptureId } = get();
+    if (!activeCaptureId) return;
+
+    set({ checkLoading: true, checkError: null });
+
+    try {
+      const checkResult = await appService.checkModel(activeCaptureId);
+      if (token !== checkToken) return;
+      set({ checkResult, checkLoading: false });
+    } catch (error) {
+      if (token !== checkToken) return;
+      set({ checkResult: null, checkLoading: false, checkError: describeError(error) });
+    }
+  },
+
+  async gotoMessage(messageId) {
+    const { messages } = get();
+    if (messages.some((item) => item.id === messageId)) {
+      await get().selectMessage(messageId);
+      return;
+    }
+
+    // Сообщение может жить в другой сессии — ищем по спискам сессий записи.
+    const { sessions } = get();
+    for (const session of sessions) {
+      const list = await appService.listMessages(session.id);
+      if (list.some((item) => item.id === messageId)) {
+        await get().selectSession(session.id);
+        await get().selectMessage(messageId);
+        return;
+      }
+    }
+  },
+
   setOverlayOpen(open) {
     set({ overlayOpen: open });
+  },
+
+  pulseSource() {
+    set((state) => ({ sourcePulseTick: state.sourcePulseTick + 1 }));
+  },
+
+  async getMessageBytes(messageId) {
+    const { messages, activeCaptureId } = get();
+    const message = messages.find((item) => item.id === messageId);
+
+    // TODO: Когда бэк придёт, activeCaptureId должен быть всегда.
+    if (!message || !activeCaptureId) {
+      throw new Error("Не удалось получить байты сообщения");
+    }
+
+    return appService.getBytes(
+      activeCaptureId,
+      message.byteOffset,
+      message.length,
+    );
   },
 
   setSidebarTab(tab) {
@@ -449,6 +572,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   resetProject() {
     requestToken += 1;
+    checkToken += 1;
     set({
       captures: [],
       activeCaptureId: null,
@@ -466,6 +590,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       compareBytes: null,
       compareBytesLoading: false,
       compareBytesError: null,
+      checkOpen: false,
+      checkResult: null,
+      checkLoading: false,
+      checkError: null,
+      journalCount: null,
       error: null,
       importPhase: "idle",
       importProgress: 0,

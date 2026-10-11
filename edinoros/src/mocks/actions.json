@@ -1,0 +1,98 @@
+[
+  {
+    "id": "act-001",
+    "timestamp": "09:12:03",
+    "name": "GET_STATUS",
+    "description": "Прочитать статус",
+    "value": null,
+    "expectedMessageId": "msg-0001"
+  },
+  {
+    "id": "act-002",
+    "timestamp": "09:12:03",
+    "name": "SET_PARAM",
+    "description": "Установить 300",
+    "value": 300,
+    "expectedMessageId": "msg-0004"
+  },
+  {
+    "id": "act-003",
+    "timestamp": "09:12:04",
+    "name": "READ_BLOCK",
+    "description": "Прочитать блок 0x0010",
+    "value": null,
+    "expectedMessageId": "msg-0006"
+  },
+  {
+    "id": "act-004",
+    "timestamp": "09:12:04",
+    "name": "WRITE_PARAM",
+    "description": "Записать регистр 7 = 10",
+    "value": 10,
+    "expectedMessageId": "msg-0009"
+  },
+  {
+    "id": "act-005",
+    "timestamp": "09:12:04",
+    "name": "GET_STATUS",
+    "description": "Прочитать статус",
+    "value": null,
+    "expectedMessageId": "msg-0011"
+  },
+  {
+    "id": "act-006",
+    "timestamp": "09:12:05",
+    "name": "READ_BLOCK",
+    "description": "Прочитать блок 0x0200",
+    "value": null,
+    "expectedMessageId": "msg-0014"
+  },
+  {
+    "id": "act-007",
+    "timestamp": "09:12:05",
+    "name": "SET_PARAM",
+    "description": "Установить 868",
+    "value": 868,
+    "expectedMessageId": "msg-0016"
+  },
+  {
+    "id": "act-008",
+    "timestamp": "09:12:05",
+    "name": "GET_STATUS",
+    "description": "Прочитать статус",
+    "value": null,
+    "expectedMessageId": "msg-0019"
+  },
+  {
+    "id": "act-009",
+    "timestamp": "09:12:06",
+    "name": "WRITE_PARAM",
+    "description": "Записать регистр 5 = 30",
+    "value": 31,
+    "expectedMessageId": "msg-0022"
+  },
+  {
+    "id": "act-010",
+    "timestamp": "09:12:06",
+    "name": "READ_BLOCK",
+    "description": "Прочитать блок 0x0400",
+    "value": null,
+    "expectedMessageId": "msg-0025"
+  },
+  {
+    "id": "act-011",
+    "timestamp": "09:12:07",
+    "name": "GET_MEASURE",
+    "description": "Получить измерение",
+    "value": 74,
+    "expectedMessageId": "msg-0029"
+  },
+  {
+    "id": "act-012",
+    "timestamp": "09:10:00",
+    "name": "REBOOT",
+    "description": "Перезагрузка стенда",
+    "value": null,
+    "expectedMessageId": null
+  }
+]

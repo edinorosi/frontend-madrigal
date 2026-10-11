@@ -41,3 +41,13 @@ export function describeRange(range: ByteRange): string {
     ? `байт ${range.offset}`
     : `байты ${range.offset}–${last}`;
 }
+
+/** Байты в текст hex через пробел: «AA 55 01». Без range — весь массив. */
+export function toHexText(bytes: Uint8Array, range?: ByteRange): string {
+  const slice = range
+    ? bytes.subarray(range.offset, range.offset + range.length)
+    : bytes;
+  return Array.from(slice, (value) =>
+    value.toString(16).padStart(2, "0").toUpperCase(),
+  ).join(" ");
+}

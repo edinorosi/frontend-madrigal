@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { CheckPanel } from "@/components/check/check-panel";
 import { EmptyHint } from "@/components/empty-hint";
 import { ComparePanel } from "@/components/interpretation/compare-panel";
 import { ComparePicker } from "@/components/interpretation/compare-picker";
@@ -58,13 +59,26 @@ export function WorkArea() {
   const setSelection = useAppStore((state) => state.setSelection);
   const setHoveredField = useAppStore((state) => state.setHoveredField);
   const saveObservation = useAppStore((state) => state.saveObservation);
+  const removeObservation = useAppStore((state) => state.removeObservation);
 
   const compareMessageId = useAppStore((state) => state.compareMessageId);
   const compareBytes = useAppStore((state) => state.compareBytes);
   const overlayOpen = useAppStore((state) => state.overlayOpen);
   const stopCompare = useAppStore((state) => state.stopCompare);
+  const pulseSource = useAppStore((state) => state.pulseSource);
+
+  const checkOpen = useAppStore((state) => state.checkOpen);
+  const openCheck = useAppStore((state) => state.openCheck);
+  const closeCheck = useAppStore((state) => state.closeCheck);
+  const journalCount = useAppStore((state) => state.journalCount);
 
   const compareActive = compareMessageId !== null;
+
+  /** Журнал действий есть — кнопка «Проверка» имеет смысл. */
+  const checkAvailable = journalCount !== null && journalCount > 0;
+
+  /** HEX-дамп смонтирован — Esc обрабатывает он, каскадом закрывая «Проверку». */
+  const hexMounted = Boolean(message && bytes && !loadingBytes);
 
   /**
    * Маска отличий по байтам A — именно маска, а не список диапазонов:
@@ -96,11 +110,15 @@ export function WorkArea() {
 
   const hexScrollRef = useRef<HTMLDivElement>(null);
 
-  // Заглушка «показать в пакете-источнике»: подсвечиваем ссылку в шапке.
+  // Заглушка «показать в пакете»: подсвечиваем ссылку в шапке по тику из стора
+  // (источник — ПКМ sidebar или меню HEX).
+  const sourcePulseTick = useAppStore((state) => state.sourcePulseTick);
   const [sourcePulse, setSourcePulse] = useState(false);
   const pulseTimerRef = useRef<number | null>(null);
 
-  const showSource = useCallback(() => {
+  useEffect(() => {
+    if (sourcePulseTick === 0) return;
+
     setSourcePulse(true);
     if (pulseTimerRef.current !== null) {
       window.clearTimeout(pulseTimerRef.current);
@@ -109,7 +127,16 @@ export function WorkArea() {
       () => setSourcePulse(false),
       1200,
     );
-  }, []);
+  }, [sourcePulseTick]);
+
+  useEffect(
+    () => () => {
+      if (pulseTimerRef.current !== null) {
+        window.clearTimeout(pulseTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const importPhase = useAppStore((state) => state.importPhase);
   const importProgress = useAppStore((state) => state.importProgress);
@@ -228,8 +255,10 @@ export function WorkArea() {
                     onSelect={setSelection}
                     messageId={message.id}
                     onCreateObservation={saveObservation}
-                    onShowSource={showSource}
+                    onShowSource={pulseSource}
                     overlayOpen={overlayOpen}
+                    checkActive={checkOpen}
+                    onStopCheck={closeCheck}
                     compareActive={compareActive}
                     onStopCompare={stopCompare}
                     scrollRef={hexScrollRef}
@@ -247,6 +276,23 @@ export function WorkArea() {
                 />
               ) : null}
             </div>
+
+            {checkAvailable ? (
+              <div className="flex shrink-0 gap-1.5">
+                <Button
+                  variant={checkOpen ? "secondary" : "outline"}
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => {
+                    void (checkOpen ? closeCheck() : openCheck());
+                  }}
+                >
+                  Проверка
+                </Button>
+              </div>
+            ) : null}
+
+            {checkOpen ? <CheckPanel escapeDelegated={hexMounted} /> : null}
           </section>
 
           <section className="flex min-w-0 basis-2/5 flex-col gap-2">
@@ -268,10 +314,14 @@ export function WorkArea() {
                   }
                   onHoverField={setHoveredField}
                   hoveredFieldId={hoveredFieldId}
+                  onSaveObservation={saveObservation}
+                  onRemoveObservation={removeObservation}
                 />
               )}
             </div>
-            {compareActive ? null : <ComparePicker />}
+            <div className="flex shrink-0 gap-1.5">
+              {compareActive ? null : <ComparePicker />}
+            </div>
           </section>
         </div>
       )}

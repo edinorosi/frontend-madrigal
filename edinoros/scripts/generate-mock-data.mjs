@@ -3,7 +3,7 @@
  *
  * Запуск:  node scripts/generate-mock-data.mjs
  *
- * Пишет src/mocks/{captures,sessions,messages,observations}.json.
+ * Пишет src/mocks/{captures,sessions,messages,observations,actions}.json.
  * Данные детерминированные (сид фиксирован), чтобы пересборка давала тот же результат.
  *
  * Формат кадра — правдоподобный TLV-подобный обмен:
@@ -216,6 +216,61 @@ function pushMessage({ session, opcode, payload, raw, direction, role, status, i
   return message;
 }
 
+/* ── журнал действий оператора (R4 «Проверка») ───────────────────────── */
+
+const journal = [];
+/** WRITE_PARAM-действия — чтобы в демо-примере подправить одно значение. */
+const writeActions = [];
+
+/**
+ * Действие журнала привязывается к тому же кадру, что и цикл протокола:
+ * журнал и сообщение — два взгляда на одно событие, отсюда настоящая связь
+ * в checkModel, а не рисованная.
+ */
+function pushAction({ message, name, description, value }) {
+  const action = {
+    id: `act-${String(journal.length + 1).padStart(3, "0")}`,
+    timestamp: message ? message.timestamp.slice(11, 19) : "09:10:00",
+    name,
+    description,
+    value,
+    expectedMessageId: message ? message.id : null,
+  };
+  journal.push(action);
+  return action;
+}
+
+/** Запись в журнал операторского запроса (payload уже известен). */
+function logOperatorAction(message, opcode, payload) {
+  switch (opcode) {
+    case 0x01:
+      pushAction({ message, name: "GET_STATUS", description: "Прочитать статус", value: null });
+      break;
+    case 0x02: {
+      // SET_PARAM: value = первые два байта payload BE (см. obs-002: 0x012C = 300).
+      const value = (payload[0] << 8) | payload[1];
+      pushAction({ message, name: "SET_PARAM", description: `Установить ${value}`, value });
+      break;
+    }
+    case 0x03: {
+      const address = (payload[0] << 8) | payload[1];
+      pushAction({ message, name: "READ_BLOCK", description: `Прочитать блок ${hex16(address)}`, value: null });
+      break;
+    }
+    case 0x04: {
+      // WRITE_PARAM: [адрес, значение].
+      const action = pushAction({
+        message,
+        name: "WRITE_PARAM",
+        description: `Записать регистр ${payload[0]} = ${payload[1]}`,
+        value: payload[1],
+      });
+      writeActions.push(action);
+      break;
+    }
+  }
+}
+
 /** Основная сессия: 34 сообщения, включая все крайние случаи §11. */
 function buildMainSession() {
   const session = SESSION_DEFS[0];
@@ -244,21 +299,21 @@ function buildMainSession() {
   for (const cycle of cycles) {
     const spec = OPCODES[cycle.opcode];
 
-    created.push(
-      pushMessage({
-        session,
-        opcode: cycle.opcode,
-        payload: cycle.payload,
-        direction: "request",
-        role: "REQ",
-        status: "parsed",
-        interpretation: "parsed",
-        label: spec.name,
-        verified: true,
-        kind: "parsed",
-        timestamp: stamp(),
-      }),
-    );
+    const request = pushMessage({
+      session,
+      opcode: cycle.opcode,
+      payload: cycle.payload,
+      direction: "request",
+      role: "REQ",
+      status: "parsed",
+      interpretation: "parsed",
+      label: spec.name,
+      verified: true,
+      kind: "parsed",
+      timestamp: stamp(),
+    });
+    created.push(request);
+    logOperatorAction(request, cycle.opcode, cycle.payload);
 
     const replyPayload =
       cycle.opcode === 0x01
@@ -445,6 +500,20 @@ const mainSession = buildMainSession();
 buildSingleMessageSession();
 buildBulkSession();
 
+/* ── журнал: демонстрационные состояния «Проверки» (R4) ──────────────── */
+
+// ❌ Расхождение: в кадре значение 30 (0x1E), в журнале оператор записал 31.
+if (writeActions[1]) writeActions[1].value = 31;
+
+// ❓ Действие, чьё сообщение модель не разобрала — статус «не проверено».
+const unknownMessage = messages.find((m) => m.label === "Неизвестный опкод");
+if (unknownMessage) {
+  pushAction({ message: unknownMessage, name: "GET_MEASURE", description: "Получить измерение", value: 74 });
+}
+
+// ❓ Ручная запись в журнале без связанного кадра.
+pushAction({ message: null, name: "REBOOT", description: "Перезагрузка стенда", value: null });
+
 /* ── наблюдения ──────────────────────────────────────────────────────── */
 
 const withBigMessage = messages.find((m) => m.length > 4000);
@@ -534,6 +603,7 @@ const files = [
   ["captures.json", captures, true],
   ["sessions.json", sessions, true],
   ["observations.json", observations, true],
+  ["actions.json", journal, true],
   // messages.json — самый крупный; пишем компактно, иначе файл раздувается вчетверо.
   ["messages.json", messages, false],
 ];

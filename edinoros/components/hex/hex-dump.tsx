@@ -77,6 +77,7 @@ export function HexDump({
   bytes,
   selection,
   highlight,
+  uncoveredRanges,
   diffMask,
   onSelect,
   messageId,
@@ -93,6 +94,8 @@ export function HexDump({
   selection: ByteRange | null;
   /** Диапазон поля, наведённого в интерпретации. */
   highlight: ByteRange | null;
+  /** Диапазоны, не покрытые моделью (R9.1) — серый слой под hover-полем. */
+  uncoveredRanges?: ByteRange[] | null;
   /** Маска отличий для режима сравнения: 1 — байт отличается. */
   diffMask?: Uint8Array | null;
   onSelect: (range: ByteRange | null) => void;
@@ -132,6 +135,21 @@ export function HexDump({
     estimateSize: () => ROW_HEIGHT,
     overscan: 24,
   });
+
+  /** Маска непокрытых байтов: 1 — байт вне покрытия модели (R9.1). */
+  const uncoveredMask = useMemo(() => {
+    if (!uncoveredRanges || uncoveredRanges.length === 0) return null;
+
+    const mask = new Uint8Array(bytes.length);
+    for (const range of uncoveredRanges) {
+      const start = Math.max(0, range.offset);
+      const end = Math.min(bytes.length, range.offset + range.length);
+      for (let index = start; index < end; index += 1) {
+        mask[index] = 1;
+      }
+    }
+    return mask;
+  }, [uncoveredRanges, bytes.length]);
 
   // rangeRef всегда отражает текущее выделение, в том числе выставленное извне.
   useEffect(() => {
@@ -700,6 +718,7 @@ export function HexDump({
                     const highlighted = rangeHasIndex(highlight, index);
                     const targeted = contextByte === index;
                     const diffed = diffMask?.[index] === 1;
+                    const uncovered = uncoveredMask?.[index] === 1;
 
                     return (
                       <span
@@ -717,6 +736,11 @@ export function HexDump({
                           selected && "bg-primary/30 text-foreground",
                           !selected && diffed && "bg-diff/40",
                           !selected && !diffed && highlighted && "bg-warn/25",
+                          !selected &&
+                            !diffed &&
+                            !highlighted &&
+                            uncovered &&
+                            "bg-muted/60",
                           !selected &&
                             !diffed &&
                             !highlighted &&
@@ -738,6 +762,7 @@ export function HexDump({
                     const highlighted = rangeHasIndex(highlight, index);
                     const targeted = contextByte === index;
                     const diffed = diffMask?.[index] === 1;
+                    const uncovered = uncoveredMask?.[index] === 1;
 
                     return (
                       <span
@@ -754,6 +779,11 @@ export function HexDump({
                           selected && "bg-primary/30 text-foreground",
                           !selected && diffed && "bg-diff/40",
                           !selected && !diffed && highlighted && "bg-warn/25",
+                          !selected &&
+                            !diffed &&
+                            !highlighted &&
+                            uncovered &&
+                            "bg-muted/60",
                           targeted && "bg-primary/20 ring-1 ring-primary",
                         )}
                       >

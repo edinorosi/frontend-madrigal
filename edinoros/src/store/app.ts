@@ -8,9 +8,10 @@
 import { create } from "zustand";
 import { appService } from "@/src/services";
 import { applyModelCached, invalidateApplyCache } from "@/src/lib/parse";
+import { resolveObservationStatus } from "@/src/lib/observations";
 import { parseModelExport } from "@/src/lib/export/model-export";
 import { parseProjectExport } from "@/src/lib/export/project-export";
-import type { ExportData } from "@/src/lib/export/report";
+import type { ApplySummary, ExportData } from "@/src/lib/export/report";
 import type {
   ByteRange,
   Capture,
@@ -33,6 +34,18 @@ export type LoadingKey =
 
 /** Откуда брать поля активного сообщения: из JSON или расчитывать моделью. */
 export type FieldsSource = "json" | "model";
+
+/** Предупреждение об устаревании (R9.2). */
+export interface StaleWarningState {
+  /** Имена изменённых правил, у которых нашлись наблюдения. */
+  ruleNames: string[];
+  /** Короткие подписи наблюдений для списка. */
+  items: string[];
+  /** Сколько наблюдений затронуто. */
+  count: number;
+  /** Сами наблюдения — для отметки «устарели». */
+  observations: Observation[];
+}
 
 const NO_LOADING: Record<LoadingKey, boolean> = {
   captures: false,
@@ -120,6 +133,25 @@ interface AppState {
   modelEditorOpen: boolean;
   openModelEditor: () => void;
   closeModelEditor: () => void;
+
+  /**
+   * Предупреждение об устаревании наблюдений (R9.2): правила изменились
+   * при закрытии редактора — возможно, наблюдения устарели. null — нет.
+   * Статусы не гасятся автоматически — только предложение в диалоге.
+   */
+  staleWarning: StaleWarningState | null;
+  /** Отметить перечисленные в предупреждении наблюдения устаревшими. */
+  markStaleWarningObservations: () => Promise<void>;
+  /** Закрыть предупреждение без изменений. */
+  dismissStaleWarning: () => void;
+  /**
+   * Скан активной записи: наблюдения, связанные с изменёнными правилами
+   * и не помеченные устаревшими. Вызывается при закрытии редактора.
+   */
+  checkStaleObservations: (
+    ruleIds: string[],
+    ruleNames: Map<string, string>,
+  ) => Promise<void>;
 
   /**
    * Применение активной модели ко всей записи (R3-г): прогресс обхода
@@ -236,6 +268,13 @@ let checkToken = 0;
 let coverageToken = 0;
 /** Отдельный счётчик для «Применить к записи» (R3-г). */
 let applyToken = 0;
+/**
+ * Правила, изменённые за сессию редактора (R9.2). Накапливаются при saveModel,
+ * проверяются один раз при закрытии редактора — предупреждение, не автогашение.
+ */
+let staleCandidateRuleIds = new Set<string>();
+/** Имена правил на момент правки — для текста предупреждения. */
+let staleCandidateRuleNames = new Map<string, string>();
 
 export const useAppStore = create<AppState>((set, get) => ({
   captures: [],
@@ -278,6 +317,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   modelsLoading: false,
 
   modelEditorOpen: false,
+  staleWarning: null,
 
   openModelEditor() {
     set({ modelEditorOpen: true });
@@ -285,6 +325,100 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   closeModelEditor() {
     set({ modelEditorOpen: false });
+
+    // Устаревание (R9.2): правила менялись — ищем связанные наблюдения.
+    const ids = [...staleCandidateRuleIds];
+    const names = new Map(staleCandidateRuleNames);
+    staleCandidateRuleIds.clear();
+    staleCandidateRuleNames.clear();
+    if (ids.length > 0) {
+      void get().checkStaleObservations(ids, names);
+    }
+  },
+
+  async checkStaleObservations(ruleIds, ruleNames) {
+    const { activeCaptureId } = get();
+    if (ruleIds.length === 0 || !activeCaptureId) return;
+
+    let sessions: Session[] = [];
+    let messages: Message[] = [];
+    try {
+      sessions = await appService.listSessions(activeCaptureId);
+      const lists = await Promise.all(
+        sessions.map((session) => appService.listMessages(session.id)),
+      );
+      messages = lists.flat();
+    } catch {
+      // Скан предупреждения — сбой списка сообщений не критичен.
+      return;
+    }
+
+    const wanted = new Set(ruleIds);
+    const found: Observation[] = [];
+    const packetByObservation = new Map<string, number>();
+
+    // Ограниченная параллельность — тот же паттерн, что в collectExportData.
+    let next = 0;
+    const worker = async () => {
+      while (next < messages.length) {
+        const index = next;
+        next += 1;
+        const message = messages[index];
+        try {
+          const list = await appService.listObservations(message.id);
+          for (const observation of list) {
+            if (
+              !observation.ruleId ||
+              !wanted.has(observation.ruleId) ||
+              resolveObservationStatus(observation) === "stale"
+            ) {
+              continue;
+            }
+            found.push(observation);
+            packetByObservation.set(observation.id, message.packetNumber);
+          }
+        } catch {
+          // Наблюдения одного сообщения не должны ронять скан.
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(8, Math.max(messages.length, 1)) }, () =>
+        worker(),
+      ),
+    );
+
+    if (found.length === 0) return;
+
+    const items = found.map((observation) => {
+      const packet = packetByObservation.get(observation.id) ?? "?";
+      const text = observation.text?.trim() ?? "";
+      const short = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+      return `пакет №${packet}${short ? `: ${short}` : ""}`;
+    });
+
+    set({
+      staleWarning: {
+        ruleNames: [...new Set(ruleNames.values())],
+        items,
+        count: found.length,
+        observations: found,
+      },
+      overlayOpen: true,
+    });
+  },
+
+  async markStaleWarningObservations() {
+    const warning = get().staleWarning;
+    if (!warning) return;
+    for (const observation of warning.observations) {
+      await get().saveObservation({ ...observation, status: "stale" });
+    }
+    set({ staleWarning: null, overlayOpen: false });
+  },
+
+  dismissStaleWarning() {
+    set({ staleWarning: null, overlayOpen: false });
   },
 
   applyCaptureProgress: null,
@@ -554,7 +688,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ hoveredFieldId: fieldId });
   },
 
-  async saveObservation(observation) {
+  async saveObservation(input) {
+    let observation = input;
+    const range = observation.range;
+
+    // Автосвязь с правилом (R9.2): новое наблюдение на байтах, попавших
+    // в поле правила. Правки существующих наблюдений не перепривязываются.
+    if (observation.ruleId === undefined && range && range.length > 0) {
+      const { activeMessageId, bytes, models, activeModelId } = get();
+      const model = models?.find((item) => item.id === activeModelId) ?? null;
+      if (model && bytes && activeMessageId === observation.messageId) {
+        const apply = applyModelCached(observation.messageId, bytes, model);
+        const field = apply.fields.find(
+          (item) =>
+            item.range.offset <= range.offset &&
+            item.range.offset + item.range.length >=
+              range.offset + range.length,
+        );
+        if (field?.ruleId) {
+          observation = { ...observation, ruleId: field.ruleId };
+        }
+      }
+    }
+
     await appService.saveObservation(observation);
 
     const { activeMessageId, observations } = get();
@@ -911,6 +1067,31 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { models } = get();
     if (models === null) return;
 
+    // Устаревание (R9.2): фиксируем правила с изменённым условием/полями
+    // и удалённые — их наблюдения проверим при закрытии редактора.
+    const previous = models.find((item) => item.id === model.id) ?? null;
+    if (previous) {
+      const prevById = new Map(previous.rules.map((rule) => [rule.id, rule]));
+      for (const rule of model.rules) {
+        const before = prevById.get(rule.id);
+        if (
+          before &&
+          (JSON.stringify(before.condition) !==
+            JSON.stringify(rule.condition) ||
+            JSON.stringify(before.fields) !== JSON.stringify(rule.fields))
+        ) {
+          staleCandidateRuleIds.add(rule.id);
+          staleCandidateRuleNames.set(rule.id, rule.name);
+        }
+      }
+      for (const before of previous.rules) {
+        if (!model.rules.some((rule) => rule.id === before.id)) {
+          staleCandidateRuleIds.add(before.id);
+          staleCandidateRuleNames.set(before.id, before.name);
+        }
+      }
+    }
+
     const exists = models.some((item) => item.id === model.id);
     set({
       models: exists
@@ -979,7 +1160,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Наблюдения по всем сообщениям — пулом, чтобы мок с задержкой не растянул экспорт.
     const observations: Observation[] = [];
-    const applyByMessage = new Map<string, "parsed" | "partial" | "not-parsed">();
+    const applyByMessage = new Map<string, ApplySummary>();
     const opcodes = new Map<number, number>();
 
     let next = 0;
@@ -1007,7 +1188,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         if (model && bytes) {
           const result = applyModelCached(message.id, bytes, model);
-          applyByMessage.set(message.id, result.status);
+          applyByMessage.set(message.id, {
+            status: result.status,
+            uncovered: result.uncovered,
+          });
         }
       }
     };
@@ -1182,6 +1366,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     checkToken += 1;
     coverageToken += 1;
     applyToken += 1;
+    staleCandidateRuleIds.clear();
+    staleCandidateRuleNames.clear();
     set({
       captures: [],
       activeCaptureId: null,
@@ -1215,6 +1401,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeModelId: null,
       modelsLoading: false,
       modelEditorOpen: false,
+      staleWarning: null,
       applyCaptureProgress: null,
       applyCaptureSummary: null,
       applyCaptureError: null,

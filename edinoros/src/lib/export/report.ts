@@ -11,6 +11,7 @@ import {
   resolveObservationStatus,
 } from "@/src/lib/observations";
 import type {
+  ByteRange,
   Capture,
   CheckResult,
   Message,
@@ -18,6 +19,13 @@ import type {
   Observation,
   ObservationKind,
 } from "@/src/types/domain";
+
+/** Статус разбора сообщения моделью + непокрытые диапазоны (R9.1). */
+export interface ApplySummary {
+  status: "parsed" | "partial" | "not-parsed";
+  /** Диапазоны, не покрытые полями; пусто при parsed/not-parsed. */
+  uncovered: ByteRange[];
+}
 
 /** Снимок данных для экспорта отчёта и проекта. */
 export interface ExportData {
@@ -28,8 +36,8 @@ export interface ExportData {
   models: Model[];
   sessionsCount: number;
   messages: Message[];
-  /** Статус применения модели к каждому сообщению; null — модели нет. */
-  applyByMessage: Map<string, "parsed" | "partial" | "not-parsed"> | null;
+  /** Разбор модели по каждому сообщению; null — модели нет. */
+  applyByMessage: Map<string, ApplySummary> | null;
   /** Гистограмма опкодов (байт смещения 2) по сообщениям; null — без байтов. */
   opcodes: Map<number, number> | null;
   observations: Observation[];
@@ -40,6 +48,8 @@ export interface ExportData {
 const ROW_LIMIT = 200;
 /** Сколько пакетов перечислять в списке неразобранных. */
 const PACKET_LIMIT = 30;
+/** Сколько непокрытых диапазонов перечислять на один пакет. */
+const UNCOVERED_RANGE_LIMIT = 8;
 
 const KIND_LABEL: Record<ObservationKind, string> = {
   comment: "комментарий",
@@ -50,6 +60,13 @@ const KIND_LABEL: Record<ObservationKind, string> = {
 
 export function buildReportMarkdown(data: ExportData): string {
   const messagesById = new Map(data.messages.map((item) => [item.id, item]));
+  // Имена правил по id — «основание: правило X» у наблюдений (R9.2).
+  const ruleNames = new Map<string, string>();
+  for (const model of data.models) {
+    for (const rule of model.rules) {
+      ruleNames.set(rule.id, rule.name);
+    }
+  }
 
   const sections = [
     reportHeader(data),
@@ -57,9 +74,9 @@ export function buildReportMarkdown(data: ExportData): string {
     sectionModel(data),
     sectionVerified(data, messagesById),
     sectionDiscrepancies(data, messagesById),
-    sectionObservations(data, messagesById),
+    sectionObservations(data, messagesById, ruleNames),
     sectionCoverage(data),
-    sectionOpenQuestions(data, messagesById),
+    sectionOpenQuestions(data, messagesById, ruleNames),
     sectionHowToApply(data),
   ];
 
@@ -97,7 +114,7 @@ function sectionOverview(data: ExportData): string {
 
   if (data.applyByMessage) {
     const counts = { parsed: 0, partial: 0, "not-parsed": 0 };
-    for (const status of data.applyByMessage.values()) counts[status] += 1;
+    for (const summary of data.applyByMessage.values()) counts[summary.status] += 1;
     lines.push(
       `- Разбор моделью: разобрано ${counts.parsed}, частично ${counts.partial}, не разобрано ${counts["not-parsed"]}`,
     );
@@ -259,6 +276,7 @@ function sectionDiscrepancies(
 function sectionObservations(
   data: ExportData,
   messagesById: Map<string, Message>,
+  ruleNames: Map<string, string>,
 ): string {
   const lines = ["## 5. Наблюдения", ""];
 
@@ -291,11 +309,13 @@ function sectionObservations(
       ["Подтверждены", []],
       ["Опровергнуты", []],
       ["Не проверены", []],
+      ["Устарели", []],
     ];
     for (const hypothesis of hypotheses) {
       const status = resolveObservationStatus(hypothesis);
       if (status === "confirmed") groups[0][1].push(hypothesis);
       else if (status === "refuted") groups[1][1].push(hypothesis);
+      else if (status === "stale") groups[3][1].push(hypothesis);
       else groups[2][1].push(hypothesis);
     }
     for (const [title, items] of groups) {
@@ -304,7 +324,9 @@ function sectionObservations(
         lines.push("- нет");
       }
       for (const item of items) {
-        lines.push(`- ${observationRef(item, messagesById)}${observationText(item)}`);
+        lines.push(
+          `- ${observationRef(item, messagesById)}${observationText(item, ruleNames)}`,
+        );
       }
       lines.push("");
     }
@@ -316,7 +338,7 @@ function sectionObservations(
     lines.push("");
     for (const item of others) {
       lines.push(
-        `- ${observationRef(item, messagesById)}${KIND_LABEL[item.kind]}, ${OBSERVATION_STATUS_LABEL[resolveObservationStatus(item)]}${observationText(item)}`,
+        `- ${observationRef(item, messagesById)}${KIND_LABEL[item.kind]}, ${OBSERVATION_STATUS_LABEL[resolveObservationStatus(item)]}${observationText(item, ruleNames)}`,
       );
     }
   }
@@ -336,7 +358,10 @@ function observationRef(
   return `**${where}**${range} — `;
 }
 
-function observationText(observation: Observation): string {
+function observationText(
+  observation: Observation,
+  ruleNames: Map<string, string>,
+): string {
   const parts: string[] = [];
   if (observation.kind === "field" && observation.name) {
     parts.push(
@@ -345,6 +370,14 @@ function observationText(observation: Observation): string {
   }
   if (observation.text) {
     parts.push(`«${observation.text}»`);
+  }
+  if (observation.ruleId) {
+    const name = ruleNames.get(observation.ruleId);
+    parts.push(
+      name
+        ? `основание: правило \`${name}\``
+        : `основание: правило \`${observation.ruleId}\` (удалено)`,
+    );
   }
   return parts.length > 0 ? `: ${parts.join(", ")}` : "";
 }
@@ -362,7 +395,7 @@ function sectionCoverage(data: ExportData): string {
 
   // Опкоды, на которые ссылаются условия правил.
   const covered = new Set<number>();
-  let hasFallback = false;
+  const fallbackNames: string[] = [];
   for (const rule of model.rules) {
     if (
       rule.condition.opcode === undefined &&
@@ -370,15 +403,20 @@ function sectionCoverage(data: ExportData): string {
       rule.condition.lengthEquals === undefined &&
       rule.condition.maxMessageLength === undefined
     ) {
-      hasFallback = true;
+      fallbackNames.push(rule.name);
     }
     if (rule.condition.opcode !== undefined) covered.add(rule.condition.opcode);
     for (const opcode of rule.condition.opcodes ?? []) covered.add(opcode);
   }
+  const hasFallback = fallbackNames.length > 0;
 
-  if (hasFallback) {
+  if (fallbackNames.length === 1) {
     lines.push(
-      "Модель содержит безусловное правило — любое сообщение будет разобрано (возможно, частично).",
+      `Правило «${fallbackNames[0]}» — fallback. Применяется, когда ни одно другое правило не подошло.`,
+    );
+  } else if (fallbackNames.length > 1) {
+    lines.push(
+      `Правила ${fallbackNames.map((name) => `«${name}»`).join(", ")} — fallback. Применяются, когда ни одно другое правило не подошло.`,
     );
   }
   if (covered.size > 0) {
@@ -409,9 +447,9 @@ function sectionCoverage(data: ExportData): string {
     const partial: Message[] = [];
     const missing: Message[] = [];
     for (const message of data.messages) {
-      const status = data.applyByMessage.get(message.id);
-      if (status === "partial") partial.push(message);
-      else if (status === "not-parsed") missing.push(message);
+      const summary = data.applyByMessage.get(message.id);
+      if (summary?.status === "partial") partial.push(message);
+      else if (summary?.status === "not-parsed") missing.push(message);
     }
 
     lines.push("");
@@ -424,6 +462,24 @@ function sectionCoverage(data: ExportData): string {
       if (partial.length > 0) {
         lines.push("");
         lines.push(`Частично (пакеты): ${packetList(partial)}.`);
+        // Непокрытые диапазоны по пакетам (R9.1) — компактно, с ограничением.
+        const detailed = partial.slice(0, PACKET_LIMIT);
+        const linesRanges: string[] = [];
+        for (const message of detailed) {
+          const summary = data.applyByMessage.get(message.id);
+          if (!summary || summary.uncovered.length === 0) continue;
+          linesRanges.push(
+            `- Пакет №${message.packetNumber}: ${uncoveredList(summary.uncovered)}`,
+          );
+        }
+        if (linesRanges.length > 0) {
+          lines.push("");
+          lines.push("Непокрытые байты:");
+          lines.push(...linesRanges);
+          if (partial.length > PACKET_LIMIT) {
+            lines.push(`- …и ещё ${partial.length - PACKET_LIMIT} пакетов.`);
+          }
+        }
       }
       if (missing.length > 0) {
         lines.push("");
@@ -446,11 +502,24 @@ function packetList(messages: Message[]): string {
   return `${numbers.slice(0, PACKET_LIMIT).join(", ")} и ещё ${numbers.length - PACKET_LIMIT}`;
 }
 
+/** Компактный список диапазонов: «байты 5–10, 15–18» (R9.1). */
+function uncoveredList(ranges: ByteRange[]): string {
+  const list = ranges.slice(0, UNCOVERED_RANGE_LIMIT).map((range) => {
+    const last = range.offset + range.length - 1;
+    return range.length === 1
+      ? `байт ${range.offset}`
+      : `байты ${range.offset}–${last}`;
+  });
+  const rest = ranges.length - UNCOVERED_RANGE_LIMIT;
+  return `${list.join(", ")}${rest > 0 ? ` и ещё ${rest}` : ""}`;
+}
+
 /* ── 7. Открытые вопросы ──────────────────────────────────────────────── */
 
 function sectionOpenQuestions(
   data: ExportData,
   messagesById: Map<string, Message>,
+  ruleNames: Map<string, string>,
 ): string {
   const open = data.observations.filter(
     (item) => resolveObservationStatus(item) === "draft",
@@ -468,7 +537,7 @@ function sectionOpenQuestions(
   lines.push("");
   for (const item of open) {
     lines.push(
-      `- ${observationRef(item, messagesById)}${KIND_LABEL[item.kind]} со статусом «черновик»${observationText(item)}`,
+      `- ${observationRef(item, messagesById)}${KIND_LABEL[item.kind]} со статусом «черновик»${observationText(item, ruleNames)}`,
     );
   }
 

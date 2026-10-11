@@ -68,6 +68,9 @@ import type {
 /** Сколько держать обратную связь в меню перед закрытием. */
 const NOTICE_MS = 700;
 
+/** Сколько непокрытых диапазонов перечислять, прежде чем оставить счётчик. */
+const UNCOVERED_LIMIT = 6;
+
 const INTERPRETATION_LABEL: Record<InterpretationStatus, string> = {
   parsed: "разобрано",
   partial: "частично",
@@ -260,6 +263,17 @@ export function InterpretationPanel({
   const models = useAppStore((state) => state.models);
   const activeModelId = useAppStore((state) => state.activeModelId);
   const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
+
+  /** Имена правил по id — подпись «правило: X» у наблюдений (R9.2). */
+  const ruleNamesById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const model of models ?? []) {
+      for (const rule of model.rules) {
+        map.set(rule.id, rule.name);
+      }
+    }
+    return map;
+  }, [models]);
 
   /**
    * Клиентский разбор (R3-б): поля считаются из байтов и правил активной
@@ -631,10 +645,41 @@ export function InterpretationPanel({
                           .join(" · ")}
                       </span>
                     ) : null}
-                  </li>
-                ))}
+                </li>
+              ))}
               </ul>
             )}
+
+            {/* Непокрытые области (R9.1): байты, которые правило не описало. */}
+            {fieldsSource === "model" &&
+            modelApply?.status === "partial" &&
+            modelApply.uncovered.length > 0 ? (
+              <div className="flex flex-col gap-1 rounded border border-border/60 px-2 py-1.5">
+                <span className="text-[10px] text-muted-foreground">
+                  Непокрытые байты
+                </span>
+                <div className="flex flex-wrap items-center gap-1">
+                  {modelApply.uncovered
+                    .slice(0, UNCOVERED_LIMIT)
+                    .map((range, index) => (
+                      <ReferenceChip
+                        key={`${range.offset}-${index}`}
+                        kind="bytes"
+                        label={describeRange(range)}
+                        preview="Перейти к непокрытым байтам"
+                        onSelect={() =>
+                          onSelectRange(range.offset, range.length)
+                        }
+                      />
+                    ))}
+                  {modelApply.uncovered.length > UNCOVERED_LIMIT ? (
+                    <span className="text-[10px] text-muted-foreground">
+                      и ещё {modelApply.uncovered.length - UNCOVERED_LIMIT}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </section>
 
           <section className="flex flex-col gap-1.5">
@@ -695,6 +740,13 @@ export function InterpretationPanel({
                             ))}
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        {observation.ruleId ? (
+                          <span className="text-[10px] text-muted-foreground">
+                            правило:{" "}
+                            {ruleNamesById.get(observation.ruleId) ??
+                              "удалённое правило"}
+                          </span>
+                        ) : null}
                         {range && !editing ? (
                           <ReferenceChip
                             kind="observation"

@@ -122,6 +122,12 @@ export interface Observation {
   status?: ObservationStatus;
   /** @deprecated устаревшее поле моков, читается только через resolveObservationStatus */
   hypothesis?: HypothesisStatus;
+  /**
+   * Правило модели, на котором основано наблюдение (R9.2, согласовано с бэком).
+   * Заполняется автоматически, если выделение попадает в поле правила;
+   * отсутствует — основания на правило нет. Бэк хранит поле как есть.
+   */
+  ruleId?: string;
   createdAt: string;
 }
 

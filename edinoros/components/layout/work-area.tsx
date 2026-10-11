@@ -166,6 +166,18 @@ export function WorkArea() {
     return message.fields.find((field) => field.id === hoveredFieldId) ?? null;
   }, [message, fieldsSource, bytes, activeModel, hoveredFieldId]);
 
+  /**
+   * Непокрытые моделью байты (R9.1): серый слой в HEX при fieldsSource=model.
+   * В JSON-режиме и при сравнении слой не показывается.
+   */
+  const uncoveredRanges = useMemo(() => {
+    if (compareActive || fieldsSource !== "model" || !message || !bytes || !activeModel) {
+      return null;
+    }
+    const apply = applyModelCached(message.id, bytes, activeModel);
+    return apply.uncovered.length > 0 ? apply.uncovered : null;
+  }, [compareActive, fieldsSource, message, bytes, activeModel]);
+
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
       {importPhase === "running" ? (
@@ -270,6 +282,7 @@ export function WorkArea() {
                     bytes={bytes}
                     selection={selection}
                     highlight={compareActive ? null : (hoveredField?.range ?? null)}
+                    uncoveredRanges={uncoveredRanges}
                     diffMask={diffMask}
                     onSelect={setSelection}
                     messageId={message.id}

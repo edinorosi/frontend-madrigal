@@ -6,6 +6,7 @@
  * payload | crc16(2 BE) — см. ModelRule в domain.ts.
  */
 import type {
+  ByteRange,
   MessageField,
   Model,
   ModelField,
@@ -15,10 +16,12 @@ import type {
 /** Итог применения модели к одному сообщению. */
 export interface ApplyResult {
   fields: MessageField[];
-  /** parsed — байты покрыты полями; partial — есть непокрытый хвост; not-parsed — ни одно правило не подошло. */
+  /** parsed — байты покрыты полями; partial — есть непокрытые; not-parsed — ни одно правило не подошло. */
   status: "parsed" | "partial" | "not-parsed";
   ruleId: string | null;
   ruleName: string | null;
+  /** Диапазоны байтов, не покрытые полями (дырки между полями и хвост). Пусто при parsed/not-parsed. */
+  uncovered: ByteRange[];
 }
 
 const NOT_PARSED: ApplyResult = {
@@ -26,6 +29,7 @@ const NOT_PARSED: ApplyResult = {
   status: "not-parsed",
   ruleId: null,
   ruleName: null,
+  uncovered: [],
 };
 
 /** Опкод кадра: байт смещения 2, если кадр достаточно длинный. */
@@ -111,21 +115,32 @@ function formatValue(bytes: Uint8Array, offset: number, length: number, type: st
 }
 
 /**
- * Байты сообщения покрыты полями: нет дыр между полями и нет хвоста.
- * Поля сортируются по смещению; наложение полей допустимо.
+ * Непокрытые полями диапазоны байтов: дырки между полями и хвост.
+ * Поля сортируются по смещению; наложение полей допустимо (пересечение
+ * не считается дыркой). Поля длиной 0 не покрывают байты и не участвуют.
  */
-function coversAllBytes(fields: MessageField[], total: number): boolean {
-  if (total === 0) return true;
+function uncoveredRanges(fields: MessageField[], total: number): ByteRange[] {
+  if (total <= 0) return [];
 
-  const sorted = [...fields].sort((a, b) => a.range.offset - b.range.offset);
+  const sorted = [...fields]
+    .filter((field) => field.range.length > 0)
+    .sort((a, b) => a.range.offset - b.range.offset);
+
+  const gaps: ByteRange[] = [];
   let covered = 0;
 
   for (const field of sorted) {
-    if (field.range.offset > covered) return false;
+    if (field.range.offset > covered) {
+      gaps.push({ offset: covered, length: field.range.offset - covered });
+    }
     covered = Math.max(covered, field.range.offset + field.range.length);
   }
 
-  return covered >= total;
+  if (covered < total) {
+    gaps.push({ offset: covered, length: total - covered });
+  }
+
+  return gaps;
 }
 
 /**
@@ -158,11 +173,14 @@ export function applyModelToBytes(bytes: Uint8Array, model: Model): ApplyResult 
     });
   }
 
+  const uncovered = uncoveredRanges(fields, bytes.length);
+
   return {
     fields,
-    status: coversAllBytes(fields, bytes.length) ? "parsed" : "partial",
+    status: uncovered.length === 0 ? "parsed" : "partial",
     ruleId: rule.id,
     ruleName: rule.name,
+    uncovered,
   };
 }
 

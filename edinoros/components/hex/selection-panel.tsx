@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { MessageSquarePlus, Tag } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Lightbulb, MessageSquarePlus, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -18,17 +18,17 @@ import { FIELD_TYPES } from "@/src/lib/observations";
 import { isInsideRadixPortal } from "@/src/lib/radix-portal";
 import type { ByteRange, Observation } from "@/src/types/domain";
 
-export const PANEL_WIDTH = 264;
-
 export interface PanelPlacement {
   placement: "above" | "below";
   /** Граница привязки: при "above" — нижняя кромка панели, при "below" — верхняя. */
   edge: number;
-  left: number;
+  /** Центр выделения по горизонтали, px от левого края контейнера. */
+  center: number;
+  containerWidth: number;
   containerHeight: number;
 }
 
-export type SelectionPanelMode = "actions" | "comment" | "field";
+export type SelectionPanelMode = "actions" | "comment" | "field" | "hypothesis";
 
 /**
  * Панель действий над выделенными байтами.
@@ -61,6 +61,15 @@ export function SelectionPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Реальная ширина панели: контент по ширине зависит от mode, замеряем после рендера.
+  const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const width = rootRef.current?.offsetWidth;
+    if (typeof width === "number" && width > 0) {
+      setMeasuredWidth(width);
+    }
+  }, [mode, saving, error]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -89,7 +98,7 @@ export function SelectionPanel({
   }, [onClose, typeSelectOpen]);
 
   const canSave =
-    mode === "comment" ? text.trim().length > 0 : name.trim().length > 0;
+    mode === "field" ? name.trim().length > 0 : text.trim().length > 0;
 
   const handleSave = async () => {
     setSaving(true);
@@ -104,9 +113,11 @@ export function SelectionPanel({
     };
 
     const observation: Observation =
-      mode === "comment"
-        ? { ...base, kind: "comment", text: text.trim() }
-        : { ...base, kind: "field", name: name.trim(), type };
+      mode === "field"
+        ? { ...base, kind: "field", name: name.trim(), type }
+        : mode === "hypothesis"
+          ? { ...base, kind: "hypothesis", text: text.trim() }
+          : { ...base, kind: "comment", text: text.trim() };
 
     try {
       await onSave(observation);
@@ -119,27 +130,40 @@ export function SelectionPanel({
     }
   };
 
+  // Панель по контенту; центрируем по центру выделения, зажимаем в границы
+  // контейнера. До первого замера ширины — скрыта, чтобы не «прыгала».
+  const left =
+    measuredWidth === null
+      ? placement.center
+      : Math.max(
+          4,
+          Math.min(
+            placement.center - measuredWidth / 2,
+            placement.containerWidth - measuredWidth - 4,
+          ),
+        );
+
   const style =
     placement.placement === "above"
       ? {
-          left: placement.left,
+          left,
           bottom: placement.containerHeight - placement.edge,
-          width: PANEL_WIDTH,
+          visibility: measuredWidth === null ? ("hidden" as const) : undefined,
         }
       : {
-          left: placement.left,
+          left,
           top: placement.edge,
-          width: PANEL_WIDTH,
+          visibility: measuredWidth === null ? ("hidden" as const) : undefined,
         };
 
   return (
     <div
       ref={rootRef}
       style={style}
-      className="absolute z-20 rounded-md border bg-popover p-1.5 shadow-lg"
+      className="absolute z-20 w-fit rounded-md border bg-popover p-1.5 shadow-lg"
     >
       {mode === "actions" ? (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 whitespace-nowrap">
           <Button size="sm" variant="ghost" onClick={() => setMode("comment")}>
             <MessageSquarePlus className="size-3.5" />
             Комментарий
@@ -148,6 +172,14 @@ export function SelectionPanel({
             <Tag className="size-3.5" />
             Поле
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setMode("hypothesis")}
+          >
+            <Lightbulb className="size-3.5" />
+            Гипотеза
+          </Button>
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -155,16 +187,13 @@ export function SelectionPanel({
             {describeRange(range)}
           </span>
 
-          {mode === "comment" ? (
-            <Textarea
-              autoFocus
-              rows={3}
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              placeholder="Что здесь важно?"
-              className="min-h-16 text-xs"
-            />
-          ) : (
+          {mode === "hypothesis" ? (
+            <span className="px-0.5 text-[10px] font-medium text-muted-foreground">
+              Создать гипотезу
+            </span>
+          ) : null}
+
+          {mode === "field" ? (
             <div className="flex flex-col gap-1.5">
               <Input
                 autoFocus
@@ -190,6 +219,19 @@ export function SelectionPanel({
                 </SelectContent>
               </Select>
             </div>
+          ) : (
+            <Textarea
+              autoFocus
+              rows={3}
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              placeholder={
+                mode === "hypothesis"
+                  ? "Формулировка гипотезы"
+                  : "Что здесь важно?"
+              }
+              className="min-h-16 text-xs"
+            />
           )}
 
           {error ? (

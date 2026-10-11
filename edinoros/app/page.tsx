@@ -6,6 +6,7 @@ import { SidebarPanel } from "@/components/layout/sidebar-panel";
 import { Statusbar } from "@/components/layout/statusbar";
 import { Topbar } from "@/components/layout/topbar";
 import { WorkArea } from "@/components/layout/work-area";
+import { ModelEditor } from "@/components/model/model-editor";
 import { useAppStore } from "@/src/store/app";
 
 /**
@@ -22,6 +23,7 @@ const DevMenu =
 
 export default function Page() {
   const loadProject = useAppStore((state) => state.loadProject);
+  const modelEditorOpen = useAppStore((state) => state.modelEditorOpen);
 
   useEffect(() => {
     void loadProject();
@@ -30,10 +32,14 @@ export default function Page() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <Topbar />
-      <div className="flex min-h-0 flex-1">
-        <SidebarPanel />
-        <WorkArea />
-      </div>
+      {modelEditorOpen ? (
+        <ModelEditor />
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <SidebarPanel />
+          <WorkArea />
+        </div>
+      )}
       <Statusbar />
       <DevMenu />
     </div>

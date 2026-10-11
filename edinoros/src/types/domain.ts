@@ -50,6 +50,8 @@ export interface SessionTuple {
 /**
  * Поле разобранного сообщения.
  * `range` — привязка к байтам: по ней ReferenceChip переходит к байтам в HEX.
+ * `ruleId` заполняется при клиентском разборе (R3-б) — какое правило модели
+ * создало поле. В полях из JSON его нет.
  */
 export interface MessageField {
   id: string;
@@ -58,6 +60,7 @@ export interface MessageField {
   value: string;
   range: ByteRange;
   note?: string;
+  ruleId?: string;
 }
 
 export interface Message {
@@ -141,7 +144,7 @@ export interface Action {
 }
 
 /** Итог строки проверки модели. */
-export type CheckStatus = "ok" | "unknown" | "error";
+export type CheckStatus = "ok" | "partial" | "unknown" | "error";
 
 /** Строка проверки: одно действие журнала сопоставлено с разбором. */
 export interface CheckRow {
@@ -166,7 +169,67 @@ export interface CheckResult {
   summary: {
     total: number;
     ok: number;
+    /** Кадр разобран, но значение из байт не извлечено. */
+    partial: number;
     unknown: number;
     error: number;
   };
+  /** Модель, которой выполнен прогон (R3-г). null — модель не была выбрана. */
+  modelId?: string | null;
+  modelName?: string | null;
+}
+
+/* ── Модель разбора (R3) ──────────────────────────────────────────────── */
+
+/** Статус модели разбора. */
+export type ModelStatus = "draft" | "checked" | "stale";
+
+/**
+ * Поле, которое правило извлекает из кадра.
+ *
+ * `offset` — смещение от начала сообщения; "end-2" — предпоследние два байта
+ * (контрольная сумма в кадре AA 55 | opcode | length | payload | crc16).
+ * `length` — число байт; "rest" — до конца сообщения; "rest-2" — до конца
+ * минус два байта (payload не включает crc16).
+ */
+export interface ModelField {
+  name: string;
+  /** uint8, uint16be, uint32be, bytes, string. */
+  type: string;
+  offset: number | "end-2";
+  length: number | "rest" | "rest-2";
+  note?: string;
+}
+
+/**
+ * Правило разбора: применяется к сообщению, если выполнены все заданные
+ * условия. Правила проверяются по порядку, побеждает первое совпавшее;
+ * пустое условие — fallback для неразобранных кадров.
+ *
+ * Условия читаются по кадру AA 55 | opcode(1) | length(2 BE) | payload | crc16:
+ * opcode — байт смещения 2, length — u16be по смещению 3.
+ */
+export interface ModelRule {
+  id: string;
+  name: string;
+  condition: {
+    /** Опкод равен. */
+    opcode?: number;
+    /** Опкод в списке — для группировки одинаковых кадров. */
+    opcodes?: number[];
+    /** Значение length-поля равно. */
+    lengthEquals?: number;
+    /** Сообщение не длиннее N байт — короткий или оборванный кадр. */
+    maxMessageLength?: number;
+  };
+  fields: ModelField[];
+}
+
+/** Модель разбора (R3). */
+export interface Model {
+  id: string;
+  name: string;
+  status: ModelStatus;
+  rules: ModelRule[];
+  createdAt: string;
 }

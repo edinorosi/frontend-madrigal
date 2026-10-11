@@ -14,6 +14,7 @@ import {
   Copy,
   FileSearch,
   FolderOpen,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EmptyHint } from "@/components/empty-hint";
@@ -22,6 +23,7 @@ import {
   type HexContextMenuItem,
 } from "@/components/hex/hex-context-menu";
 import { MessageRow } from "@/components/sidebar/message-row";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -56,8 +58,10 @@ export function MessageList() {
   const messages = useAppStore((state) => state.messages);
   const activeMessageId = useAppStore((state) => state.activeMessageId);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
+  const messagesError = useAppStore((state) => state.messagesError);
   const loading = useAppStore((state) => state.loading.messages);
   const selectMessage = useAppStore((state) => state.selectMessage);
+  const selectSession = useAppStore((state) => state.selectSession);
   const startCompare = useAppStore((state) => state.startCompare);
   const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
   const pulseSource = useAppStore((state) => state.pulseSource);
@@ -272,6 +276,23 @@ export function MessageList() {
 
   if (!activeSessionId) {
     return <EmptyHint>Выберите сессию, чтобы увидеть её сообщения</EmptyHint>;
+  }
+
+  // Баг С.7: при сбое загрузки не показываем ложное «нет сообщений».
+  if (messagesError) {
+    return (
+      <div className="flex flex-col items-start gap-2 p-2">
+        <p className="text-xs text-destructive">{messagesError}</p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void selectSession(activeSessionId)}
+        >
+          <RefreshCw className="size-3.5" />
+          Повторить
+        </Button>
+      </div>
+    );
   }
 
   if (messages.length === 0) {

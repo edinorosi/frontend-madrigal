@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { computeDiff, maskToRanges } from "@/src/lib/diff";
 import { formatBytes, formatClock, formatTuple } from "@/src/lib/format";
+import { applyModelCached } from "@/src/lib/parse";
 import { useAppStore } from "@/src/store/app";
 import type { Direction, ParseStatus } from "@/src/types/domain";
 
@@ -144,8 +145,26 @@ export function WorkArea() {
   const cancelImport = useAppStore((state) => state.cancelImport);
   const dismissImportError = useAppStore((state) => state.dismissImportError);
 
-  const hoveredField =
-    message?.fields.find((field) => field.id === hoveredFieldId) ?? null;
+  const fieldsSource = useAppStore((state) => state.fieldsSource);
+  const models = useAppStore((state) => state.models);
+  const activeModelId = useAppStore((state) => state.activeModelId);
+  const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
+
+  /**
+   * Подсветка поля в HEX: при fieldsSource=model поля считаются на лету
+   * (кэш applyModelCached), искать их в message.fields бессмысленно.
+   */
+  const hoveredField = useMemo(() => {
+    if (!message) return null;
+
+    if (fieldsSource === "model") {
+      if (!bytes || !activeModel) return null;
+      const apply = applyModelCached(message.id, bytes, activeModel);
+      return apply.fields.find((field) => field.id === hoveredFieldId) ?? null;
+    }
+
+    return message.fields.find((field) => field.id === hoveredFieldId) ?? null;
+  }, [message, fieldsSource, bytes, activeModel, hoveredFieldId]);
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">

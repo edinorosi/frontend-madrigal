@@ -8,7 +8,16 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { Copy, Crosshair, Pencil, Trash2 } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  Circle,
+  CircleDot,
+  Copy,
+  Crosshair,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EmptyHint } from "@/components/empty-hint";
 import {
@@ -18,6 +27,12 @@ import {
 import { ReferenceChip } from "@/components/reference-chip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -31,11 +46,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { describeRange, formatOffset } from "@/src/lib/hex";
 import {
+  MODEL_STATUS_LABEL,
+  MODEL_STATUS_TONE,
+} from "@/src/lib/model-status";
+import { applyModelCached } from "@/src/lib/parse";
+import {
   FIELD_TYPES,
+  OBSERVATION_STATUSES,
   OBSERVATION_STATUS_LABEL,
   resolveObservationStatus,
 } from "@/src/lib/observations";
-import { useAppStore } from "@/src/store/app";
+import { useAppStore, type FieldsSource } from "@/src/store/app";
 import type {
   InterpretationStatus,
   Message,
@@ -73,12 +94,22 @@ const STATUS_TONE: Record<ObservationStatus, string> = {
   stale: "text-muted-foreground",
 };
 
+/** Подписи статусов для меню — с заглавной, в отличие от бейджа. */
+const STATUS_MENU_LABEL: Record<ObservationStatus, string> = {
+  draft: "Черновик",
+  confirmed: "Проверена",
+  refuted: "Опровергнута",
+  stale: "Устарела",
+};
+
 interface ObservationMenuState {
   observationId: string;
   x: number;
   y: number;
   containerWidth: number;
   containerHeight: number;
+  /** Второй уровень меню: выбор статуса. */
+  level: "root" | "status";
 }
 
 /**
@@ -223,6 +254,26 @@ export function InterpretationPanel({
   onRemoveObservation: (observationId: string) => Promise<void>;
 }) {
   const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
+  const fieldsSource = useAppStore((state) => state.fieldsSource);
+  const setFieldsSource = useAppStore((state) => state.setFieldsSource);
+  const bytes = useAppStore((state) => state.bytes);
+  const models = useAppStore((state) => state.models);
+  const activeModelId = useAppStore((state) => state.activeModelId);
+  const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
+
+  /**
+   * Клиентский разбор (R3-б): поля считаются из байтов и правил активной
+   * модели. Кэш — в applyModelCached, пересчёта на рендере нет.
+   */
+  const modelApply = useMemo(() => {
+    if (fieldsSource !== "model" || !bytes || !activeModel || !message) {
+      return null;
+    }
+    return applyModelCached(message.id, bytes, activeModel);
+  }, [fieldsSource, bytes, activeModel, message]);
+
+  const displayedFields =
+    fieldsSource === "model" ? (modelApply?.fields ?? []) : message?.fields ?? [];
 
   const [menu, setMenu] = useState<ObservationMenuState | null>(null);
   const [menuNotice, setMenuNotice] = useState<string | null>(null);
@@ -303,6 +354,7 @@ export function InterpretationPanel({
         y: event.clientY - rect.top,
         containerWidth: wrap.clientWidth,
         containerHeight: wrap.clientHeight,
+        level: "root",
       });
     },
     [setOverlayOpen],
@@ -318,6 +370,18 @@ export function InterpretationPanel({
       }
     },
     [onRemoveObservation, closeMenu, showNotice],
+  );
+
+  const handleChangeStatus = useCallback(
+    async (observation: Observation, status: ObservationStatus) => {
+      try {
+        await onSaveObservation({ ...observation, status });
+        closeMenu();
+      } catch {
+        showNotice("Не удалось изменить статус");
+      }
+    },
+    [onSaveObservation, closeMenu, showNotice],
   );
 
   const copyObservationText = useCallback(
@@ -350,6 +414,25 @@ export function InterpretationPanel({
     const target = observations.find((item) => item.id === menu.observationId);
     if (!target) return [];
 
+    // Второй уровень: выбор статуса, текущий отмечен галочкой.
+    if (menu.level === "status") {
+      const current = resolveObservationStatus(target);
+      return [
+        {
+          id: "status-back",
+          label: "Назад",
+          icon: ChevronLeft,
+          onSelect: () => setMenu({ ...menu, level: "root" }),
+        },
+        ...OBSERVATION_STATUSES.map<HexContextMenuItem>((status) => ({
+          id: `status-${status}`,
+          label: STATUS_MENU_LABEL[status],
+          icon: status === current ? Check : Circle,
+          onSelect: () => void handleChangeStatus(target, status),
+        })),
+      ];
+    }
+
     const items: HexContextMenuItem[] = [
       {
         id: "edit",
@@ -359,6 +442,12 @@ export function InterpretationPanel({
           closeMenu();
           setEditingId(target.id);
         },
+      },
+      {
+        id: "status",
+        label: "Изменить статус",
+        icon: CircleDot,
+        onSelect: () => setMenu({ ...menu, level: "status" }),
       },
     ];
 
@@ -403,6 +492,7 @@ export function InterpretationPanel({
     onSelectRange,
     copyObservationText,
     handleDelete,
+    handleChangeStatus,
   ]);
 
   if (!message) {
@@ -429,19 +519,82 @@ export function InterpretationPanel({
           </div>
 
           <section className="flex flex-col gap-1.5">
-            <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-              Поля
-            </h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                Поля
+              </h3>
+              {fieldsSource === "model" && activeModel ? (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "px-1.5 text-[10px] font-normal",
+                    MODEL_STATUS_TONE[activeModel.status],
+                  )}
+                  title={`Модель: ${activeModel.name}`}
+                >
+                  {activeModel.name} · {MODEL_STATUS_LABEL[activeModel.status]} ·{" "}
+                  {displayedFields.length} пол.
+                </Badge>
+              ) : null}
+              {fieldsSource === "model" && modelApply && modelApply.status !== "parsed" ? (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px]",
+                    modelApply.status === "partial" ? "text-warn" : "text-destructive",
+                  )}
+                >
+                  {modelApply.status === "partial" ? "частично" : "не разобрано"}
+                </Badge>
+              ) : null}
+              {fieldsSource === "model" && modelApply?.ruleName ? (
+                <span className="text-[10px] text-muted-foreground">
+                  правило: {modelApply.ruleName}
+                </span>
+              ) : null}
+              <div className="ml-auto">
+                <Select
+                  value={fieldsSource}
+                  onValueChange={(value) => setFieldsSource(value as FieldsSource)}
+                  onOpenChange={(open) => setOverlayOpen(open)}
+                >
+                  <SelectTrigger size="sm" className="h-6 w-[104px] text-[10px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="json">JSON</SelectItem>
+                    <SelectItem value="model" disabled={!activeModel}>
+                      Модель
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
-            {message.fields.length === 0 ? (
+            {fieldsSource === "model" && !activeModel ? (
+              <p className="text-xs text-muted-foreground">
+                Активная модель не выбрана
+              </p>
+            ) : fieldsSource === "model" && !bytes ? (
+              <p className="text-xs text-muted-foreground">Загрузка байтов…</p>
+            ) : fieldsSource === "model" && modelApply?.status === "not-parsed" ? (
+              <p className="text-xs text-muted-foreground">
+                Ни одно правило модели не подошло
+              </p>
+            ) : displayedFields.length === 0 ? (
               <p className="text-xs text-muted-foreground">
                 Модель не выделила поля в этом сообщении
               </p>
             ) : (
               <ul className="flex flex-col">
-                {message.fields.map((field) => (
+                {displayedFields.map((field) => (
                   <li
                     key={field.id}
+                    title={
+                      field.ruleId && modelApply?.ruleName
+                        ? `Правило: ${modelApply.ruleName}`
+                        : undefined
+                    }
                     onMouseEnter={() => onHoverField(field.id)}
                     onMouseLeave={() => onHoverField(null)}
                     className={cn(
@@ -466,9 +619,16 @@ export function InterpretationPanel({
                         }
                       />
                     </div>
-                    {field.note ? (
+                    {field.note || (field.ruleId && fieldsSource === "model") ? (
                       <span className="text-[10px] text-muted-foreground">
-                        {field.note}
+                        {[
+                          field.note,
+                          field.ruleId && fieldsSource === "model"
+                            ? `правило: ${modelApply?.ruleName ?? field.ruleId}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </span>
                     ) : null}
                   </li>
@@ -506,12 +666,35 @@ export function InterpretationPanel({
                         <Badge variant="secondary" className="text-[10px]">
                           {OBSERVATION_LABEL[observation.kind]}
                         </Badge>
-                        <Badge
-                          variant="outline"
-                          className={cn("text-[10px]", STATUS_TONE[status])}
+                        <DropdownMenu
+                          onOpenChange={(open) => setOverlayOpen(open)}
                         >
-                          {OBSERVATION_STATUS_LABEL[status]}
-                        </Badge>
+                          <DropdownMenuTrigger asChild>
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "cursor-pointer text-[10px]",
+                                STATUS_TONE[status],
+                              )}
+                            >
+                              {OBSERVATION_STATUS_LABEL[status]}
+                            </Badge>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start" className="min-w-32">
+                            {OBSERVATION_STATUSES.map((item) => (
+                              <DropdownMenuCheckboxItem
+                                key={item}
+                                checked={item === status}
+                                onCheckedChange={() =>
+                                  void handleChangeStatus(observation, item)
+                                }
+                                className="text-xs"
+                              >
+                                {STATUS_MENU_LABEL[item]}
+                              </DropdownMenuCheckboxItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         {range && !editing ? (
                           <ReferenceChip
                             kind="observation"

@@ -4,6 +4,8 @@ import type {
   CheckResult,
   Direction,
   Message,
+  MessageField,
+  Model,
   Observation,
   Session,
 } from "@/src/types/domain";
@@ -57,4 +59,21 @@ export interface AppService {
    * TODO: реализация на бэке ожидается, мок готов.
    */
   checkModel(captureId: string, modelId?: string): Promise<CheckResult>;
+
+  /**
+   * Модели разбора (R3). Отклонение от §12, согласованное отдельно:
+   * модель — объект исследования, редактируется и сохраняется как сущность.
+   * TODO: методы для R3. Согласованы с бэком. Ожидают реализации на бэке. Пока — моки.
+   */
+  listModels(): Promise<Model[]>;
+  /** Сохранение модели: upsert по `id`. */
+  saveModel(model: Model): Promise<void>;
+  removeModel(modelId: string): Promise<void>;
+  /**
+   * Применение модели к сообщению: байты сообщения разбираются по правилам
+   * модели, возвращаются поля с привязкой к байтам.
+   * TODO: клиентский расчёт по правилам — R3-б. Пока возвращает готовые
+   * поля сообщения из мока.
+   */
+  applyModel(messageId: string, modelId: string): Promise<MessageField[]>;
 }

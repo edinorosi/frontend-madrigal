@@ -8,9 +8,11 @@
 import actionsJson from "@/src/mocks/actions.json";
 import capturesJson from "@/src/mocks/captures.json";
 import messagesJson from "@/src/mocks/messages.json";
+import modelsJson from "@/src/mocks/models.json";
 import observationsJson from "@/src/mocks/observations.json";
 import sessionsJson from "@/src/mocks/sessions.json";
 import type { AppService } from "@/src/services/appService";
+import { applyModelToBytes, type ApplyResult } from "@/src/lib/parse";
 import { readMockSettings, recordImportedCapture } from "@/src/services/mock/scenarios";
 import type {
   Action,
@@ -19,6 +21,7 @@ import type {
   CheckRow,
   Direction,
   Message,
+  Model,
   Observation,
   Session,
 } from "@/src/types/domain";
@@ -38,6 +41,9 @@ const fixtures = messagesJson as unknown as MessageFixture[];
 const messages: Message[] = fixtures;
 
 let observations: Observation[] = [...(observationsJson as unknown as Observation[])];
+
+/** Модели разбора (R3). Мутабельный массив — saveModel/removeModel меняют его. */
+let models: Model[] = [...(modelsJson as unknown as Model[])];
 
 /** Журнал действий оператора (R4). В моках он один на запись. */
 const actions: Action[] = actionsJson as unknown as Action[];
@@ -134,8 +140,13 @@ export const mockService: AppService = {
   },
 
   async listMessages(sessionId: string, direction?: Direction) {
-    const { latencyMs } = readMockSettings();
+    const { scenario, latencyMs } = readMockSettings();
     await delay(latencyMs);
+
+    // DEV-сценарий: симуляция сбоя загрузки сообщений (баг С.7).
+    if (scenario === "messages-fail") {
+      throw new Error("Не удалось загрузить сообщения сессии");
+    }
 
     return messages.filter(
       (message) =>
@@ -182,10 +193,14 @@ export const mockService: AppService = {
     return actions;
   },
 
-  async checkModel(captureId: string) {
-    // modelId: в моках одна модель, параметр берётся для будущего бэка.
+  async checkModel(captureId: string, modelId?: string) {
     const { scenario, latencyMs } = readMockSettings();
     await delay(latencyMs);
+
+    // Модель по id; без id — первая (так делал мок до R3-г).
+    const model = modelId
+      ? models.find((item) => item.id === modelId)
+      : models[0];
 
     const journal = scenario === "empty" || captureId === "" ? [] : actions;
     const rows: CheckRow[] = journal.map((action, index) => {
@@ -205,7 +220,21 @@ export const mockService: AppService = {
       if (!message) {
         return { ...base, extracted: "—", status: "unknown" as const, messageId: action.expectedMessageId };
       }
-      if (message.status !== "parsed") {
+
+      // Модель не выбрана — извлекать нечего.
+      if (!model) {
+        return { ...base, extracted: "—", status: "unknown" as const, messageId: message.id };
+      }
+
+      // Применяем модель к байтам сообщения (R3-г): статус и поля — из модели,
+      // а не из JSON-статуса сообщения.
+      const bytes = captureBytes.slice(
+        message.byteOffset,
+        message.byteOffset + message.length,
+      );
+      const apply = applyModelToBytes(bytes, model);
+
+      if (apply.status === "not-parsed") {
         return { ...base, extracted: "—", status: "unknown" as const, messageId: message.id };
       }
       if (action.value === null) {
@@ -213,9 +242,10 @@ export const mockService: AppService = {
         return { ...base, extracted: "—", status: "ok" as const, messageId: message.id };
       }
 
-      const extracted = extractValue(message);
+      const extracted = extractValueFromApply(apply, bytes);
       if (extracted === null) {
-        return { ...base, extracted: "—", status: "unknown" as const, messageId: message.id };
+        // Кадр разобран, но значение из байт не извлечено — частичный разбор.
+        return { ...base, extracted: "—", status: "partial" as const, messageId: message.id };
       }
       return {
         ...base,
@@ -228,27 +258,77 @@ export const mockService: AppService = {
     const summary = {
       total: rows.length,
       ok: rows.filter((row) => row.status === "ok").length,
+      partial: rows.filter((row) => row.status === "partial").length,
       unknown: rows.filter((row) => row.status === "unknown").length,
       error: rows.filter((row) => row.status === "error").length,
     };
 
-    return { rows, summary };
+    return {
+      rows,
+      summary,
+      modelId: model?.id ?? null,
+      modelName: model?.name ?? null,
+    };
+  },
+
+  async listModels() {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    return models;
+  },
+
+  /** Upsert: совпадение по id означает правку, иначе добавление. */
+  async saveModel(model: Model) {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+
+    const exists = models.some((item) => item.id === model.id);
+    models = exists
+      ? models.map((item) => (item.id === model.id ? model : item))
+      : [...models, model];
+  },
+
+  async removeModel(modelId: string) {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    models = models.filter((item) => item.id !== modelId);
+  },
+
+  /**
+   * Заглушка R3-а: modelId принимается, но не применяется — поля берутся
+   * готовыми из мока. Клиентский расчёт по правилам приходит в R3-б.
+   */
+  async applyModel(messageId: string) {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+
+    const message = messages.find((item) => item.id === messageId);
+    if (!message) throw new Error(`Сообщение ${messageId} не найдено`);
+    return message.fields;
   },
 };
 
 /**
- * Извлечение значения из байт сообщения — мок имитирует работу модели на бэке.
- * Кадр: AA 55 | opcode(1) | length(2 BE) | payload | crc16(2 BE).
+ * Извлечение значения из разобранной модели (R3-г): границы полей берутся
+ * из applyModelToBytes (payload — из модели), опкод — из поля opcode.
  * SET_PARAM: u16be первых двух байт payload; WRITE_PARAM: второй байт payload.
  * Для прочих опкодов извлечение неизвестно — null, строка станет «не проверено».
  */
-function extractValue(message: Message): number | null {
-  const bytes = captureBytes.slice(message.byteOffset, message.byteOffset + message.length);
-  if (bytes.length < 5 || bytes[0] !== 0xaa || bytes[1] !== 0x55) return null;
+function extractValueFromApply(
+  apply: ApplyResult,
+  bytes: Uint8Array,
+): number | null {
+  const opcodeField = apply.fields.find((field) => field.name === "opcode");
+  const payloadField = apply.fields.find((field) => field.name === "payload");
+  if (!payloadField) return null;
 
-  const opcode = bytes[2];
-  const length = (bytes[3] << 8) | bytes[4];
-  const payload = bytes.slice(5, 5 + length);
+  // Опкод — по границе поля модели; без неё — по смещению кадра.
+  const opcodeOffset = opcodeField?.range.offset ?? 2;
+  if (bytes.length <= opcodeOffset) return null;
+  const opcode = bytes[opcodeOffset];
+
+  const start = payloadField.range.offset;
+  const payload = bytes.subarray(start, start + payloadField.range.length);
   if (payload.length < 2) return null;
 
   switch (opcode) {

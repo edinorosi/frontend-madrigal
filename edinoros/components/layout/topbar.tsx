@@ -1,5 +1,6 @@
 "use client";
 
+import { ExportButton } from "@/components/export/export-button";
 import { ImportButton } from "@/components/import-button";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,13 @@ export function Topbar() {
         ?.packetNumber ?? null,
   );
   const stopCompare = useAppStore((state) => state.stopCompare);
+  const activeModel = useAppStore(
+    (state) =>
+      state.models?.find((item) => item.id === state.activeModelId) ?? null,
+  );
+  const modelEditorOpen = useAppStore((state) => state.modelEditorOpen);
+  const openModelEditor = useAppStore((state) => state.openModelEditor);
+  const closeModelEditor = useAppStore((state) => state.closeModelEditor);
 
   const compareActive = compareMessageId !== null;
 
@@ -44,9 +52,17 @@ export function Topbar() {
             {formatBytes(capture.sizeBytes)}
           </Badge>
         ) : null}
-        <Badge variant="secondary" className="shrink-0 font-mono text-[11px]">
-          модель —
-        </Badge>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="h-5 shrink-0 px-2 font-mono text-[11px]"
+          title="Редактор модели"
+          onClick={() =>
+            modelEditorOpen ? closeModelEditor() : openModelEditor()
+          }
+        >
+          Модель: {activeModel ? activeModel.name : "—"}
+        </Button>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -69,6 +85,7 @@ export function Topbar() {
             <Separator orientation="vertical" className="mx-1 !h-5" />
           </>
         ) : null}
+        <ExportButton />
         <ImportButton size="sm" variant="outline" />
         <Separator orientation="vertical" className="mx-1 !h-5" />
         <ThemeToggle />

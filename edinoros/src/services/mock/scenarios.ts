@@ -14,7 +14,8 @@ export type ScenarioId =
   | "empty"
   | "no-sessions"
   | "single-message"
-  | "large";
+  | "large"
+  | "messages-fail";
 
 export interface ScenarioInfo {
   id: ScenarioId;
@@ -47,6 +48,11 @@ export const SCENARIOS: ScenarioInfo[] = [
     id: "large",
     title: "Сессия на 300 сообщений",
     description: "Проверка виртуализации списка",
+  },
+  {
+    id: "messages-fail",
+    title: "Ошибка загрузки сообщений",
+    description: "listMessages падает — список показывает «Повторить»",
   },
 ];
 

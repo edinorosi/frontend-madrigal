@@ -7,11 +7,17 @@
  */
 import { create } from "zustand";
 import { appService } from "@/src/services";
+import { applyModelCached, invalidateApplyCache } from "@/src/lib/parse";
+import { parseModelExport } from "@/src/lib/export/model-export";
+import { parseProjectExport } from "@/src/lib/export/project-export";
+import type { ExportData } from "@/src/lib/export/report";
 import type {
   ByteRange,
   Capture,
   CheckResult,
+  CheckRow,
   Message,
+  Model,
   Observation,
   Session,
 } from "@/src/types/domain";
@@ -24,6 +30,9 @@ export type LoadingKey =
   | "messages"
   | "bytes"
   | "observations";
+
+/** Откуда брать поля активного сообщения: из JSON или расчитывать моделью. */
+export type FieldsSource = "json" | "model";
 
 const NO_LOADING: Record<LoadingKey, boolean> = {
   captures: false,
@@ -42,6 +51,8 @@ interface AppState {
 
   messages: Message[];
   activeMessageId: string | null;
+  /** Ошибка загрузки сообщений текущей сессии — блок «Повторить» в списке. */
+  messagesError: string | null;
 
   bytes: Uint8Array | null;
   observations: Observation[];
@@ -67,10 +78,70 @@ interface AppState {
   checkLoading: boolean;
   checkError: string | null;
   /**
+   * Записи, которые не удалось проверить при агрегации (R4.2).
+   * Предупреждение над таблицей; общий результат при этом остаётся.
+   */
+  checkWarnings: string[] | null;
+  /**
+   * Записи, участвующие в проверке (R4.2). null — все записи.
+   * Смена выбора сбрасывает результат и покрытие опкодов.
+   */
+  checkCaptureIds: string[] | null;
+  /** Выбор записей для проверки; null — вернуть «все записи». */
+  setCheckCaptureIds: (ids: string[] | null) => void;
+  /**
+   * Покрытие опкодов (R4.2): какие опкоды есть в правилах модели
+   * (covered) и какие реально встречены в выбранных записях (seen).
+   */
+  checkCoverage: { covered: number[]; seen: number[] } | null;
+  /** Ключ последнего расчёта покрытия (модель + выбор) — защита от гонок. */
+  checkCoverageKey: string | null;
+  checkCoverageLoading: boolean;
+  checkCoverageError: string | null;
+  /** Сбор покрытия опкодов по выбранным записям; кэшируется по ключу. */
+  loadCheckCoverage: () => Promise<void>;
+  /**
    * Действий в журнале текущей записи. null — ещё не известно.
    * Кнопка «Проверка» рендерится только при журнале > 0.
    */
   journalCount: number | null;
+
+  /** Модели разбора (R3). null — ещё не загружены. */
+  models: Model[] | null;
+  /** Активная модель; null — активной нет. */
+  activeModelId: string | null;
+  modelsLoading: boolean;
+
+  /**
+   * Редактор модели (R3-в) открыт — полноэкранный экран заменяет рабочую
+   * зону. Состояние, а не роут: статический экспорт не требует маршрута,
+   * Esc и возврат «Назад» не нуждаются в истории браузера.
+   */
+  modelEditorOpen: boolean;
+  openModelEditor: () => void;
+  closeModelEditor: () => void;
+
+  /**
+   * Применение активной модели ко всей записи (R3-г): прогресс обхода
+   * сообщений. null — не идёт.
+   */
+  applyCaptureProgress: { done: number; total: number } | null;
+  /** Итог последнего применения модели ко всей записи. */
+  applyCaptureSummary: {
+    total: number;
+    parsed: number;
+    partial: number;
+    notParsed: number;
+  } | null;
+  applyCaptureError: string | null;
+  applyCapture: () => Promise<void>;
+
+  /** Откуда брать поля активного сообщения: из JSON или расчитывать моделью. */
+  fieldsSource: FieldsSource;
+  /** Переключатель источника полей в панели интерпретации. */
+  setFieldsSource: (source: FieldsSource) => void;
+  /** Очистка кэша клиентского разбора — при правке или удалении модели. */
+  invalidateModelFields: (modelId?: string) => void;
 
   /** Портальный слой Radix (Select, Popover) открыт — Esc адресован ему. */
   overlayOpen: boolean;
@@ -104,6 +175,13 @@ interface AppState {
   openCheck: () => Promise<void>;
   closeCheck: () => void;
   runCheck: () => Promise<void>;
+  /** Загрузка моделей разбора (R3). Сбой не роняет просмотр записи. */
+  loadModels: () => Promise<void>;
+  /** Выбор активной модели; null — сбросить выбор. */
+  setActiveModel: (modelId: string | null) => void;
+  /** Upsert: сохранение модели с существующим id правит её, иначе создаёт. */
+  saveModel: (model: Model) => Promise<void>;
+  removeModel: (modelId: string) => Promise<void>;
   /**
    * Переход к байтам сообщения из строки «Проверки». Если сообщение в другой
    * сессии — сначала переключает на неё.
@@ -123,6 +201,17 @@ interface AppState {
   cancelImport: () => void;
   dismissImportError: () => void;
   resetProject: () => void;
+
+  /* ── Экспорт/импорт (R6) ─────────────────────────────────────────── */
+  /**
+   * Сбор полного снимка данных исследования для экспорта отчёта/проекта.
+   * Обходит все сессии, сообщения и наблюдения через appService.
+   */
+  collectExportData: () => Promise<ExportData>;
+  /** Импорт модели из JSON-файла: новая модель с новым id. */
+  importModel: (file: File) => Promise<void>;
+  /** Импорт проекта из JSON-файла: восстановление моделей, наблюдений, настроек. */
+  importProject: (file: File) => Promise<void>;
 }
 
 function describeError(error: unknown): string {
@@ -143,6 +232,10 @@ let importToken = 0;
 let compareToken = 0;
 /** Отдельный счётчик для «Проверки» — та же причина, что у сравнения. */
 let checkToken = 0;
+/** Отдельный счётчик для сбора покрытия опкодов (R4.2). */
+let coverageToken = 0;
+/** Отдельный счётчик для «Применить к записи» (R3-г). */
+let applyToken = 0;
 
 export const useAppStore = create<AppState>((set, get) => ({
   captures: [],
@@ -153,6 +246,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   messages: [],
   activeMessageId: null,
+  messagesError: null,
 
   bytes: null,
   observations: [],
@@ -171,7 +265,106 @@ export const useAppStore = create<AppState>((set, get) => ({
   checkResult: null,
   checkLoading: false,
   checkError: null,
+  checkWarnings: null,
+  checkCaptureIds: null,
+  checkCoverage: null,
+  checkCoverageKey: null,
+  checkCoverageLoading: false,
+  checkCoverageError: null,
   journalCount: null,
+
+  models: null,
+  activeModelId: null,
+  modelsLoading: false,
+
+  modelEditorOpen: false,
+
+  openModelEditor() {
+    set({ modelEditorOpen: true });
+  },
+
+  closeModelEditor() {
+    set({ modelEditorOpen: false });
+  },
+
+  applyCaptureProgress: null,
+  applyCaptureSummary: null,
+  applyCaptureError: null,
+
+  async applyCapture() {
+    const { activeCaptureId, activeModelId, models } = get();
+    const model = models?.find((item) => item.id === activeModelId) ?? null;
+    if (!activeCaptureId || !model) return;
+
+    const token = ++applyToken;
+    set({
+      applyCaptureProgress: { done: 0, total: 0 },
+      applyCaptureSummary: null,
+      applyCaptureError: null,
+    });
+
+    try {
+      const sessions = await appService.listSessions(activeCaptureId);
+      const lists = await Promise.all(
+        sessions.map((session) => appService.listMessages(session.id)),
+      );
+      const all = lists.flat();
+      const total = all.length;
+      if (token !== applyToken) return;
+      set({ applyCaptureProgress: { done: 0, total } });
+
+      let parsed = 0;
+      let partial = 0;
+      let notParsed = 0;
+      let done = 0;
+      let next = 0;
+
+      // Ограниченная параллельность: мок с задержкой, бэк может быть тяжёлым.
+      const worker = async () => {
+        while (next < all.length) {
+          // Отмена (saveModel/resetProject): не читать байты и не писать кэш
+          // по устаревшей модели.
+          if (token !== applyToken) return;
+          const index = next;
+          next += 1;
+          const message = all[index];
+          const bytes = await appService.getBytes(
+            activeCaptureId,
+            message.byteOffset,
+            message.length,
+          );
+          const result = applyModelCached(message.id, bytes, model);
+          if (result.status === "parsed") parsed += 1;
+          else if (result.status === "partial") partial += 1;
+          else notParsed += 1;
+          done += 1;
+          if (token === applyToken) {
+            set({ applyCaptureProgress: { done, total } });
+          }
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(8, Math.max(total, 1)) }, () =>
+          worker(),
+        ),
+      );
+
+      if (token !== applyToken) return;
+      set({
+        applyCaptureProgress: null,
+        applyCaptureSummary: { total, parsed, partial, notParsed },
+      });
+    } catch (error) {
+      if (token !== applyToken) return;
+      set({
+        applyCaptureProgress: null,
+        applyCaptureSummary: null,
+        applyCaptureError: describeError(error),
+      });
+    }
+  },
+
+  fieldsSource: "json",
 
   overlayOpen: false,
 
@@ -210,6 +403,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         error: describeError(error),
       }));
     }
+
+    // Модели (R3) грузятся отдельно: их сбой не должен ронять просмотр записи.
+    void get().loadModels();
   },
 
   async selectCapture(captureId) {
@@ -217,8 +413,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Другая запись — сравнивать прежние сообщения больше не с чем.
     get().stopCompare();
-    // Проверка относится к прежней записи — закрываем.
-    get().closeCheck();
+    // Проверка (R4.2) идёт по выбранным записям, а не по активной —
+    // результат и открытая панель при смене активной записи не трогаем.
 
     set((state) => ({
       activeCaptureId: captureId,
@@ -226,11 +422,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeSessionId: null,
       messages: [],
       activeMessageId: null,
+      messagesError: null,
       bytes: null,
       observations: [],
       selection: null,
-      checkResult: null,
-      checkError: null,
       journalCount: null,
       loading: { ...state.loading, sessions: true },
     }));
@@ -273,6 +468,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeSessionId: sessionId,
       messages: [],
       activeMessageId: null,
+      messagesError: null,
       bytes: null,
       observations: [],
       selection: null,
@@ -285,12 +481,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       set((state) => ({
         messages,
+        messagesError: null,
         loading: { ...state.loading, messages: false },
       }));
     } catch (error) {
       if (token !== requestToken) return;
       set((state) => ({
         loading: { ...state.loading, messages: false },
+        messagesError: describeError(error),
         error: describeError(error),
       }));
     }
@@ -451,6 +649,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (get().journalCount === 0) return;
 
     set({ checkOpen: true });
+    // Покрытие опкодов (R4.2) собирается параллельно — кэшируется по ключу.
+    void get().loadCheckCoverage();
     // Первое открытие сразу запускает проверку; повторное открывает прошлый
     // результат — перезапуск живёт отдельно (ошибка сети и «Повторить»).
     if (get().checkResult === null && get().checkError === null) {
@@ -462,20 +662,427 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ checkOpen: false });
   },
 
+  setCheckCaptureIds(ids) {
+    // Новый выбор = новый прогон: отменяем текущий и гасим результат.
+    checkToken += 1;
+    coverageToken += 1;
+    set({
+      checkCaptureIds: ids,
+      checkResult: null,
+      checkError: null,
+      checkLoading: false,
+      checkWarnings: null,
+      checkCoverage: null,
+      checkCoverageKey: null,
+      checkCoverageLoading: false,
+      checkCoverageError: null,
+    });
+  },
+
   async runCheck() {
     const token = ++checkToken;
-    const { activeCaptureId } = get();
-    if (!activeCaptureId) return;
+    const { captures, checkCaptureIds, activeModelId } = get();
 
-    set({ checkLoading: true, checkError: null });
+    // Проверяемые записи: null — все загруженные (R4.2).
+    const ids = (checkCaptureIds ?? captures.map((item) => item.id)).filter(
+      (id) => captures.some((item) => item.id === id),
+    );
+    if (ids.length === 0) {
+      set({
+        checkResult: null,
+        checkLoading: false,
+        checkError: null,
+        checkWarnings: null,
+      });
+      return;
+    }
+
+    set({ checkLoading: true, checkError: null, checkWarnings: null });
+    // «Перепроверить» добирает и покрытие, если оно упало или сброшено.
+    void get().loadCheckCoverage();
+
+    // Агрегация (R4.2): по вызову checkModel на запись, ошибки не роняют итог.
+    const settled = await Promise.allSettled(
+      ids.map((captureId) =>
+        appService.checkModel(captureId, activeModelId ?? undefined),
+      ),
+    );
+    if (token !== checkToken) return;
+
+    const warnings: string[] = [];
+    const results: CheckResult[] = [];
+    settled.forEach((item, index) => {
+      if (item.status === "fulfilled") {
+        results.push(item.value);
+      } else {
+        const capture = captures.find((entry) => entry.id === ids[index]);
+        warnings.push(
+          `Не удалось проверить запись ${capture ? capture.fileName : ids[index]}`,
+        );
+      }
+    });
+
+    if (results.length === 0) {
+      set({
+        checkResult: null,
+        checkLoading: false,
+        checkError: warnings[0] ?? "Не удалось проверить записи",
+        checkWarnings: null,
+      });
+      return;
+    }
+
+    // Слияние: строки с префиксом записи (id строк у мока совпадают между
+    // записями), сводка — сумма по всем проверенным записям.
+    const rows: CheckRow[] = [];
+    const summary = { total: 0, ok: 0, partial: 0, unknown: 0, error: 0 };
+    results.forEach((result, index) => {
+      const prefix = ids[index];
+      for (const row of result.rows) {
+        rows.push({ ...row, id: `${prefix}:${row.id}` });
+      }
+      summary.total += result.summary.total;
+      summary.ok += result.summary.ok;
+      summary.partial += result.summary.partial;
+      summary.unknown += result.summary.unknown;
+      summary.error += result.summary.error;
+    });
+
+    set({
+      checkResult: {
+        rows,
+        summary,
+        modelId: results[0].modelId ?? null,
+        modelName: results[0].modelName ?? null,
+      },
+      checkLoading: false,
+      checkWarnings: warnings.length > 0 ? warnings : null,
+    });
+  },
+
+  async loadCheckCoverage() {
+    const { captures, checkCaptureIds, activeModelId, models } = get();
+    const model = models?.find((item) => item.id === activeModelId) ?? null;
+    const ids = (checkCaptureIds ?? captures.map((item) => item.id)).filter(
+      (id) => captures.some((item) => item.id === id),
+    );
+    const key = `${activeModelId ?? "—"}:${[...ids].sort().join(",")}`;
+
+    // Кэш: покрытие уже посчитано для этой модели и этого выбора.
+    if (get().checkCoverage !== null && get().checkCoverageKey === key) {
+      return;
+    }
+
+    if (!model || ids.length === 0) {
+      coverageToken += 1;
+      set({
+        checkCoverage: null,
+        checkCoverageKey: null,
+        checkCoverageLoading: false,
+        checkCoverageError: null,
+      });
+      return;
+    }
+
+    const token = ++coverageToken;
+    set({ checkCoverageLoading: true, checkCoverageError: null });
 
     try {
-      const checkResult = await appService.checkModel(activeCaptureId);
-      if (token !== checkToken) return;
-      set({ checkResult, checkLoading: false });
+      // Опкоды, заявленные в правилах модели.
+      const covered = new Set<number>();
+      for (const rule of model.rules) {
+        if (rule.condition.opcode !== undefined) {
+          covered.add(rule.condition.opcode);
+        }
+        for (const opcode of rule.condition.opcodes ?? []) {
+          covered.add(opcode);
+        }
+      }
+
+      // Опкоды, реально встреченные в сообщениях выбранных записей:
+      // opcode кадра — байт смещения 2 (AA 55 | opcode | length | …).
+      const seen = new Set<number>();
+      for (const captureId of ids) {
+        const sessions = await appService.listSessions(captureId);
+        if (token !== coverageToken) return;
+        const lists = await Promise.all(
+          sessions.map((session) => appService.listMessages(session.id)),
+        );
+        const all = lists.flat();
+
+        let next = 0;
+        const worker = async () => {
+          while (next < all.length) {
+            const index = next;
+            next += 1;
+            if (token !== coverageToken) return;
+            const message = all[index];
+            if (message.length < 3) continue;
+            const bytes = await appService.getBytes(
+              captureId,
+              message.byteOffset,
+              3,
+            );
+            if (token !== coverageToken) return;
+            seen.add(bytes[2]);
+          }
+        };
+        await Promise.all(
+          Array.from({ length: Math.min(8, Math.max(all.length, 1)) }, () =>
+            worker(),
+          ),
+        );
+      }
+
+      if (token !== coverageToken) return;
+      set({
+        checkCoverage: {
+          covered: [...covered].sort((a, b) => a - b),
+          seen: [...seen].sort((a, b) => a - b),
+        },
+        checkCoverageKey: key,
+        checkCoverageLoading: false,
+      });
     } catch (error) {
-      if (token !== checkToken) return;
-      set({ checkResult: null, checkLoading: false, checkError: describeError(error) });
+      if (token !== coverageToken) return;
+      set({
+        checkCoverage: null,
+        checkCoverageKey: null,
+        checkCoverageLoading: false,
+        checkCoverageError: describeError(error),
+      });
+    }
+  },
+
+  async loadModels() {
+    set({ modelsLoading: true });
+    try {
+      const models = await appService.listModels();
+      set({
+        models,
+        modelsLoading: false,
+        // Первая модель активна по умолчанию; пустой список — активной нет.
+        activeModelId: models[0]?.id ?? null,
+      });
+    } catch {
+      // Сбой моделей не должен ронять просмотр записи.
+      set({ models: [], modelsLoading: false, activeModelId: null });
+    }
+  },
+
+  setActiveModel(modelId) {
+    // Смена активной модели делает старый кэш непригодным.
+    get().invalidateModelFields();
+    // И результат проверки относится к прежней модели — сбрасываем.
+    checkToken += 1;
+    // Покрытие опкодов тоже зависит от модели.
+    coverageToken += 1;
+    // Итог «Применить к записи» тоже относится к прежней модели.
+    set({
+      activeModelId: modelId,
+      checkResult: null,
+      checkError: null,
+      checkLoading: false,
+      checkCoverage: null,
+      checkCoverageKey: null,
+      checkCoverageLoading: false,
+      checkCoverageError: null,
+      applyCaptureSummary: null,
+    });
+  },
+
+  setFieldsSource(source) {
+    set({ fieldsSource: source });
+  },
+
+  invalidateModelFields(modelId) {
+    invalidateApplyCache(modelId);
+  },
+
+  async saveModel(model) {
+    await appService.saveModel(model);
+    get().invalidateModelFields(model.id);
+    // Правка модели обесценивает результат проверки — сбрасываем.
+    checkToken += 1;
+    // И правка обесценивает итог применения и прерывает текущий прогон.
+    applyToken += 1;
+    // Покрытие опкодов зависит от правил — сбрасываем.
+    coverageToken += 1;
+    const { models } = get();
+    if (models === null) return;
+
+    const exists = models.some((item) => item.id === model.id);
+    set({
+      models: exists
+        ? models.map((item) => (item.id === model.id ? model : item))
+        : [...models, model],
+      checkResult: null,
+      checkError: null,
+      checkLoading: false,
+      checkCoverage: null,
+      checkCoverageKey: null,
+      checkCoverageLoading: false,
+      checkCoverageError: null,
+      applyCaptureProgress: null,
+      applyCaptureSummary: null,
+      applyCaptureError: null,
+    });
+  },
+
+  async removeModel(modelId) {
+    await appService.removeModel(modelId);
+    get().invalidateModelFields(modelId);
+    const { models, activeModelId } = get();
+    if (models === null) return;
+
+    const next = models.filter((item) => item.id !== modelId);
+    const nextActiveId =
+      activeModelId === modelId ? (next[0]?.id ?? null) : activeModelId;
+    if (nextActiveId !== activeModelId) {
+      // Удалили активную — проверка сделана по прежней модели.
+      checkToken += 1;
+      set({
+        models: next,
+        activeModelId: nextActiveId,
+        checkResult: null,
+        checkError: null,
+        checkLoading: false,
+      });
+      return;
+    }
+    set({ models: next, activeModelId: nextActiveId });
+  },
+
+  async collectExportData() {
+    const {
+      captures,
+      activeCaptureId,
+      models,
+      activeModelId,
+      checkResult,
+    } = get();
+
+    const capture =
+      captures.find((item) => item.id === activeCaptureId) ?? null;
+    const model =
+      models?.find((item) => item.id === activeModelId) ?? null;
+
+    let sessions: Session[] = [];
+    let messages: Message[] = [];
+    if (activeCaptureId) {
+      sessions = await appService.listSessions(activeCaptureId);
+      const lists = await Promise.all(
+        sessions.map((session) => appService.listMessages(session.id)),
+      );
+      messages = lists.flat();
+    }
+
+    // Наблюдения по всем сообщениям — пулом, чтобы мок с задержкой не растянул экспорт.
+    const observations: Observation[] = [];
+    const applyByMessage = new Map<string, "parsed" | "partial" | "not-parsed">();
+    const opcodes = new Map<number, number>();
+
+    let next = 0;
+    const worker = async () => {
+      while (next < messages.length) {
+        const index = next;
+        next += 1;
+        const message = messages[index];
+
+        const [obs, bytes] = await Promise.all([
+          appService.listObservations(message.id),
+          activeCaptureId
+            ? appService.getBytes(
+                activeCaptureId,
+                message.byteOffset,
+                message.length,
+              )
+            : Promise.resolve<Uint8Array | null>(null),
+        ]);
+        observations.push(...obs);
+
+        if (bytes && bytes.length > 2) {
+          const opcode = bytes[2];
+          opcodes.set(opcode, (opcodes.get(opcode) ?? 0) + 1);
+        }
+        if (model && bytes) {
+          const result = applyModelCached(message.id, bytes, model);
+          applyByMessage.set(message.id, result.status);
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(8, Math.max(messages.length, 1)) }, () =>
+        worker(),
+      ),
+    );
+
+    return {
+      generatedAt: new Date().toISOString(),
+      capture,
+      model,
+      models: models ?? [],
+      sessionsCount: sessions.length,
+      messages,
+      applyByMessage: model ? applyByMessage : null,
+      opcodes: model ? opcodes : null,
+      observations,
+      checkResult,
+    };
+  },
+
+  async importModel(file) {
+    const text = await file.text();
+    const model = parseModelExport(text);
+    await get().saveModel(model);
+    get().setActiveModel(model.id);
+  },
+
+  async importProject(file) {
+    const text = await file.text();
+    const project = parseProjectExport(text);
+
+    // Модели и наблюдения — через сервис (upsert по id).
+    for (const model of project.models) {
+      await appService.saveModel(model);
+    }
+    for (const observation of project.observations) {
+      await appService.saveObservation(observation);
+    }
+
+    // Перечитываем список моделей и выставляем активную из файла.
+    await get().loadModels();
+    if (
+      project.active.modelId &&
+      get().models?.some((item) => item.id === project.active.modelId)
+    ) {
+      get().setActiveModel(project.active.modelId);
+    }
+
+    // Источник полей и последняя проверка.
+    checkToken += 1;
+    set({
+      fieldsSource: project.active.fieldsSource,
+      checkResult: project.checkResult,
+      checkError: null,
+      checkLoading: false,
+    });
+
+    // Запись может уже быть загружена — переключаемся, если id совпал.
+    const { activeCaptureId } = get();
+    if (project.capture && project.capture.id === activeCaptureId) {
+      if (
+        project.active.sessionId &&
+        get().sessions.some((item) => item.id === project.active.sessionId)
+      ) {
+        await get().selectSession(project.active.sessionId);
+        if (
+          project.active.messageId &&
+          get().messages.some((item) => item.id === project.active.messageId)
+        ) {
+          await get().selectMessage(project.active.messageId);
+        }
+      }
     }
   },
 
@@ -573,6 +1180,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   resetProject() {
     requestToken += 1;
     checkToken += 1;
+    coverageToken += 1;
+    applyToken += 1;
     set({
       captures: [],
       activeCaptureId: null,
@@ -580,6 +1189,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeSessionId: null,
       messages: [],
       activeMessageId: null,
+      messagesError: null,
       bytes: null,
       observations: [],
       selection: null,
@@ -594,7 +1204,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       checkResult: null,
       checkLoading: false,
       checkError: null,
+      checkWarnings: null,
+      checkCaptureIds: null,
+      checkCoverage: null,
+      checkCoverageKey: null,
+      checkCoverageLoading: false,
+      checkCoverageError: null,
       journalCount: null,
+      models: null,
+      activeModelId: null,
+      modelsLoading: false,
+      modelEditorOpen: false,
+      applyCaptureProgress: null,
+      applyCaptureSummary: null,
+      applyCaptureError: null,
+      fieldsSource: "json",
       error: null,
       importPhase: "idle",
       importProgress: 0,

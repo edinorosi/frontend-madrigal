@@ -13,6 +13,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Copy,
   FileSearch,
+  Lightbulb,
   MessageSquarePlus,
   Tag,
   X,
@@ -23,7 +24,6 @@ import {
   type HexContextMenuItem,
 } from "@/components/hex/hex-context-menu";
 import {
-  PANEL_WIDTH,
   SelectionPanel,
   type PanelPlacement,
   type SelectionPanelMode,
@@ -160,17 +160,32 @@ export function HexDump({
 
       const scrollRect = scrollEl.getBoundingClientRect();
       const cellEl = scrollEl.querySelector<HTMLElement>("[data-cell]");
-      let left = 8;
+      // Центр выделения по горизонтали; сама панель центрируется по нему
+      // после замера своей ширины (см. SelectionPanel).
+      let center = scrollEl.clientWidth / 2;
 
       if (cellEl) {
         const cellRect = cellEl.getBoundingClientRect();
-        const column = range.offset % BYTES_PER_ROW;
-        left = cellRect.left - scrollRect.left + column * cellRect.width;
+        const startColumn = range.offset % BYTES_PER_ROW;
+        const endColumn =
+          (range.offset + range.length - 1) % BYTES_PER_ROW;
+        center =
+          cellRect.left -
+          scrollRect.left +
+          ((startColumn + endColumn + 1) / 2) * cellRect.width;
       }
 
-      left = Math.max(4, Math.min(left, scrollEl.clientWidth - PANEL_WIDTH - 4));
-
-      return { range, placement: { placement, edge, left, containerHeight }, mode: "actions" };
+      return {
+        range,
+        placement: {
+          placement,
+          edge,
+          center,
+          containerWidth: scrollEl.clientWidth,
+          containerHeight,
+        },
+        mode: "actions",
+      };
     },
     [scrollRef],
   );
@@ -581,6 +596,12 @@ export function HexDump({
           label: "Создать поле",
           icon: Tag,
           onSelect: () => openPanelFromMenu(target, "field"),
+        },
+        {
+          id: "hypothesis",
+          label: "Создать гипотезу",
+          icon: Lightbulb,
+          onSelect: () => openPanelFromMenu(target, "hypothesis"),
         },
         {
           id: "copy",

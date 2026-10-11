@@ -3,7 +3,7 @@
  *
  * Запуск:  node scripts/generate-mock-data.mjs
  *
- * Пишет src/mocks/{captures,sessions,messages,observations,actions}.json.
+ * Пишет src/mocks/{captures,sessions,messages,observations,actions,models}.json.
  * Данные детерминированные (сид фиксирован), чтобы пересборка давала тот же результат.
  *
  * Формат кадра — правдоподобный TLV-подобный обмен:
@@ -577,6 +577,85 @@ const observations = [
   },
 ];
 
+/* ── модель разбора по умолчанию (R3) ───────────────────────────────── */
+
+/**
+ * Дефолтная модель воспроизводит frameFields:
+ * - короткий кадр (< 7 байт) — sync + raw;
+ * - известный опкод — полный кадр с crc16;
+ * - прочий опкод — структура кадра без crc16, opcode с пометкой.
+ * Правила проверяются по порядку, первое совпавшее побеждает.
+ */
+function buildDefaultModel() {
+  return [
+    {
+      id: "model-default",
+      name: "default",
+      status: "checked",
+      createdAt: "2026-03-14T12:00:00.000Z",
+      rules: [
+        {
+          id: "rule-short-frame",
+          name: "Короткий кадр",
+          condition: { maxMessageLength: 6 },
+          fields: [
+            { name: "sync", type: "uint16be", offset: 0, length: 2 },
+            {
+              name: "raw",
+              type: "bytes",
+              offset: 2,
+              length: "rest",
+              note: "Хвост не описан моделью",
+            },
+          ],
+        },
+        {
+          id: "rule-known-opcode",
+          name: "Известный опкод",
+          condition: {
+            opcodes: [
+              ...Object.keys(OPCODES).map(Number),
+              ...Object.values(OPCODES)
+                .map((spec) => spec.reply)
+                .filter((code) => code !== null),
+            ],
+          },
+          fields: [
+            { name: "sync", type: "uint16be", offset: 0, length: 2 },
+            { name: "opcode", type: "uint8", offset: 2, length: 1 },
+            { name: "length", type: "uint16be", offset: 3, length: 2 },
+            { name: "payload", type: "bytes", offset: 5, length: "rest-2" },
+            {
+              name: "crc16",
+              type: "uint16be",
+              offset: "end-2",
+              length: 2,
+              note: "Контрольная сумма кадра",
+            },
+          ],
+        },
+        {
+          id: "rule-unknown-opcode",
+          name: "Неизвестный опкод",
+          condition: {},
+          fields: [
+            { name: "sync", type: "uint16be", offset: 0, length: 2 },
+            {
+              name: "opcode",
+              type: "uint8",
+              offset: 2,
+              length: 1,
+              note: "Значение не описано моделью",
+            },
+            { name: "length", type: "uint16be", offset: 3, length: 2 },
+            { name: "payload", type: "bytes", offset: 5, length: "rest-2" },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 /* ── сессии и записи ─────────────────────────────────────────────────── */
 
 const sessions = SESSION_DEFS.map((definition) => ({
@@ -604,6 +683,7 @@ const files = [
   ["sessions.json", sessions, true],
   ["observations.json", observations, true],
   ["actions.json", journal, true],
+  ["models.json", buildDefaultModel(), true],
   // messages.json — самый крупный; пишем компактно, иначе файл раздувается вчетверо.
   ["messages.json", messages, false],
 ];

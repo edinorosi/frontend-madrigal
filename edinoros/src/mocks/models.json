@@ -1,0 +1,115 @@
+[
+  {
+    "id": "model-default",
+    "name": "default",
+    "status": "checked",
+    "createdAt": "2026-03-14T12:00:00.000Z",
+    "rules": [
+      {
+        "id": "rule-short-frame",
+        "name": "Короткий кадр",
+        "condition": {
+          "maxMessageLength": 6
+        },
+        "fields": [
+          {
+            "name": "sync",
+            "type": "uint16be",
+            "offset": 0,
+            "length": 2
+          },
+          {
+            "name": "raw",
+            "type": "bytes",
+            "offset": 2,
+            "length": "rest",
+            "note": "Хвост не описан моделью"
+          }
+        ]
+      },
+      {
+        "id": "rule-known-opcode",
+        "name": "Известный опкод",
+        "condition": {
+          "opcodes": [
+            1,
+            2,
+            3,
+            4,
+            16,
+            127,
+            129,
+            130,
+            131,
+            132
+          ]
+        },
+        "fields": [
+          {
+            "name": "sync",
+            "type": "uint16be",
+            "offset": 0,
+            "length": 2
+          },
+          {
+            "name": "opcode",
+            "type": "uint8",
+            "offset": 2,
+            "length": 1
+          },
+          {
+            "name": "length",
+            "type": "uint16be",
+            "offset": 3,
+            "length": 2
+          },
+          {
+            "name": "payload",
+            "type": "bytes",
+            "offset": 5,
+            "length": "rest-2"
+          },
+          {
+            "name": "crc16",
+            "type": "uint16be",
+            "offset": "end-2",
+            "length": 2,
+            "note": "Контрольная сумма кадра"
+          }
+        ]
+      },
+      {
+        "id": "rule-unknown-opcode",
+        "name": "Неизвестный опкод",
+        "condition": {},
+        "fields": [
+          {
+            "name": "sync",
+            "type": "uint16be",
+            "offset": 0,
+            "length": 2
+          },
+          {
+            "name": "opcode",
+            "type": "uint8",
+            "offset": 2,
+            "length": 1,
+            "note": "Значение не описано моделью"
+          },
+          {
+            "name": "length",
+            "type": "uint16be",
+            "offset": 3,
+            "length": 2
+          },
+          {
+            "name": "payload",
+            "type": "bytes",
+            "offset": 5,
+            "length": "rest-2"
+          }
+        ]
+      }
+    ]
+  }
+]

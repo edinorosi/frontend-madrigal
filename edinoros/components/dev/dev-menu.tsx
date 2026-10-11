@@ -559,6 +559,10 @@ export function DevMenu() {
                   name="ошибка"
                   value={state.error ?? "нет"}
                 />
+                <StateRow
+                  name="ошибка сообщений"
+                  value={state.messagesError ?? "нет"}
+                />
               </Section>
             </div>
           </ScrollArea>

@@ -1,6 +1,6 @@
 "use client";
 
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ArrowLeft, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { ExportButton } from "@/components/export/export-button";
 import { ImportButton } from "@/components/import-button";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { captureTitle, formatBytes } from "@/src/lib/format";
 import { useAppStore } from "@/src/store/app";
+import { useProjectsStore } from "@/src/store/projects";
 
 export function Topbar() {
   const capture = useAppStore(
@@ -25,6 +26,9 @@ export function Topbar() {
   const captures = useAppStore((state) => state.captures);
   const activeCaptureId = useAppStore((state) => state.activeCaptureId);
   const selectCapture = useAppStore((state) => state.selectCapture);
+
+  const backToProjects = useProjectsStore((state) => state.backToProjects);
+  const leaving = useProjectsStore((state) => state.busy);
 
   const compareMessageId = useAppStore((state) => state.compareMessageId);
   const activeMessageNumber = useAppStore(
@@ -52,6 +56,18 @@ export function Topbar() {
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-sidebar px-3">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 shrink-0 gap-1 px-2"
+        disabled={leaving}
+        title="Сохранить проект и вернуться к списку"
+        onClick={() => void backToProjects()}
+      >
+        <ArrowLeft className="size-4" />
+        Проекты
+      </Button>
+      <Separator orientation="vertical" className="mx-1 h-5" />
       <Button
         variant="ghost"
         size="sm"

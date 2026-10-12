@@ -78,12 +78,47 @@ interface MockSettingsStore extends MockSettings {
   reset: () => void;
 }
 
+/**
+ * Записи, импортированные в моке, переживают перезагрузку страницы:
+ * иначе проект, созданный из PCAP, после перезагрузки не нашёл бы свою
+ * запись. Пишется только в dev-моде — вместе с этим модулем исчезнет.
+ */
+const IMPORTED_CAPTURES_KEY = "edinoros-mock-captures";
+
+function readImportedCaptures(): Capture[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(IMPORTED_CAPTURES_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is Capture =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as Record<string, unknown>).id === "string" &&
+        typeof (item as Record<string, unknown>).fileName === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeImportedCaptures(list: Capture[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(IMPORTED_CAPTURES_KEY, JSON.stringify(list));
+  } catch {
+    // Хранилище недоступно — записи живут до перезагрузки, как раньше.
+  }
+}
+
 const INITIAL: MockSettings = {
   scenario: "default",
   latencyMs: 120,
   importDurationMs: 1400,
   importFails: false,
-  importedCaptures: [],
+  importedCaptures: readImportedCaptures(),
 };
 
 export const useMockSettings = create<MockSettingsStore>((set) => ({
@@ -93,8 +128,15 @@ export const useMockSettings = create<MockSettingsStore>((set) => ({
   setImportDuration: (importDurationMs) => set({ importDurationMs }),
   setImportFails: (importFails) => set({ importFails }),
   addImportedCapture: (capture) =>
-    set((state) => ({ importedCaptures: [...state.importedCaptures, capture] })),
-  clearImportedCaptures: () => set({ importedCaptures: [] }),
+    set((state) => {
+      const importedCaptures = [...state.importedCaptures, capture];
+      writeImportedCaptures(importedCaptures);
+      return { importedCaptures };
+    }),
+  clearImportedCaptures: () => {
+    writeImportedCaptures([]);
+    set({ importedCaptures: [] });
+  },
   reset: () => set({ ...INITIAL }),
 }));
 

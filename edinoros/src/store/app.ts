@@ -10,7 +10,10 @@ import { appService } from "@/src/services";
 import { applyModelCached, invalidateApplyCache } from "@/src/lib/parse";
 import { resolveObservationStatus } from "@/src/lib/observations";
 import { parseModelExport } from "@/src/lib/export/model-export";
-import { parseProjectExport } from "@/src/lib/export/project-export";
+import {
+  parseProjectExport,
+  type ProjectExportFile,
+} from "@/src/lib/export/project-export";
 import {
   analyzeCapture,
   PATTERN_SAMPLE_LIMIT,
@@ -322,6 +325,12 @@ interface AppState {
   importModel: (file: File) => Promise<void>;
   /** Импорт проекта из JSON-файла: восстановление моделей, наблюдений, настроек. */
   importProject: (file: File) => Promise<void>;
+  /**
+   * Применение снимка проекта (R6.4) к рабочей зоне: модели, наблюдения,
+   * настройки, последняя проверка. Общий путь для импорта файла и открытия
+   * проекта со стартовой страницы — разбор файла берёт на себя вызывающая.
+   */
+  applyProjectData: (project: ProjectExportFile) => Promise<void>;
 }
 
 function describeError(error: unknown): string {
@@ -1353,7 +1362,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   async importProject(file) {
     const text = await file.text();
     const project = parseProjectExport(text);
+    await get().applyProjectData(project);
+  },
 
+  async applyProjectData(project) {
     // Модели и наблюдения — через сервис (upsert по id).
     for (const model of project.models) {
       await appService.saveModel(model);

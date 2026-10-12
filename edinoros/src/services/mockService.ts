@@ -59,6 +59,13 @@ const captureBytesById = new Map<string, Uint8Array>(
   captures.map((capture) => [capture.id, captureBytes]),
 );
 
+// Записи, импортированные в прошлых сессиях (dev-мок держит их в
+// localStorage): байты в моке одинаковые, но адресация по captureId
+// должна работать и после перезагрузки страницы.
+for (const imported of readMockSettings().importedCaptures) {
+  captureBytesById.set(imported.id, captureBytes);
+}
+
 function buildCaptureBytes(items: MessageFixture[]): Uint8Array {
   const ordered = [...items].sort((a, b) => a.byteOffset - b.byteOffset);
   const total = ordered.reduce(

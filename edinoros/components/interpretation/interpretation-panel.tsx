@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { isTypingTarget } from "@/src/lib/keyboard";
 import { EmptyHint } from "@/components/empty-hint";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   HexContextMenu,
   type HexContextMenuItem,
@@ -323,6 +324,8 @@ export function InterpretationPanel({
   const [menu, setMenu] = useState<ObservationMenuState | null>(null);
   const [menuNotice, setMenuNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Удаление наблюдения — с подтверждением (последний пункт меню).
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -528,7 +531,10 @@ export function InterpretationPanel({
       label: "Удалить",
       icon: Trash2,
       separatorBefore: true,
-      onSelect: () => void handleDelete(target.id),
+      onSelect: () => {
+        closeMenu();
+        setPendingDeleteId(target.id);
+      },
     });
 
     return items;
@@ -538,7 +544,7 @@ export function InterpretationPanel({
     closeMenu,
     onSelectRange,
     copyObservationText,
-    handleDelete,
+    setPendingDeleteId,
     handleChangeStatus,
   ]);
 
@@ -850,6 +856,28 @@ export function InterpretationPanel({
           onClose={closeMenu}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        title="Удалить наблюдение?"
+        description={(() => {
+          const target = observations.find(
+            (item) => item.id === pendingDeleteId,
+          );
+          if (!target) return "Наблюдение будет удалено безвозвратно.";
+          const text = (target.text ?? target.name ?? "").trim();
+          const short = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+          return short
+            ? `«${short}» будет удалено безвозвратно.`
+            : "Наблюдение будет удалено безвозвратно.";
+        })()}
+        onConfirm={() => {
+          const id = pendingDeleteId;
+          setPendingDeleteId(null);
+          if (id) void handleDelete(id);
+        }}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </div>
   );
 }

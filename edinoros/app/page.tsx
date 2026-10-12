@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { SidebarPanel } from "@/components/layout/sidebar-panel";
 import { Statusbar } from "@/components/layout/statusbar";
@@ -29,6 +29,7 @@ export default function Page() {
   const setSidebarCollapsed = useAppStore(
     (state) => state.setSidebarCollapsed,
   );
+  const startImport = useAppStore((state) => state.startImport);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -40,6 +41,43 @@ export default function Page() {
   useEffect(() => {
     if (isMobile) setSidebarCollapsed(true);
   }, [isMobile, setSidebarCollapsed]);
+
+  // Перетаскивание файла на окно — альтернатива диалогу «Загрузить PCAP».
+  // Валидация расширения/размера — внутри startImport.
+  const [dragOver, setDragOver] = useState(false);
+  useEffect(() => {
+    const hasFiles = (event: DragEvent) =>
+      Array.from(event.dataTransfer?.types ?? []).includes("Files");
+
+    const onDragOver = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      setDragOver(true);
+    };
+
+    const onDragLeave = (event: DragEvent) => {
+      // Выход за пределы окна (relatedTarget = null), а не внутри него.
+      if (event.relatedTarget !== null) return;
+      setDragOver(false);
+    };
+
+    const onDrop = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      setDragOver(false);
+      const file = event.dataTransfer?.files?.[0];
+      if (file) void startImport(file);
+    };
+
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [startImport]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -55,6 +93,14 @@ export default function Page() {
       <Statusbar />
       <StaleWarningDialog />
       <DevMenu />
+
+      {dragOver ? (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/60">
+          <div className="rounded-lg border-2 border-dashed border-primary bg-background px-10 py-7 text-sm shadow-lg">
+            Отпустите, чтобы загрузить запись PCAP
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

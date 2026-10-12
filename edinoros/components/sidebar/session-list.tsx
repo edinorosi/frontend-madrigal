@@ -21,6 +21,7 @@ export function SessionList() {
   const hasCapture = useAppStore((state) => state.activeCaptureId !== null);
   const loading = useAppStore((state) => state.loading.sessions);
   const selectSession = useAppStore((state) => state.selectSession);
+  const setSidebarTab = useAppStore((state) => state.setSidebarTab);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -63,7 +64,11 @@ export function SessionList() {
               key={row.key}
               type="button"
               aria-current={active ? "true" : undefined}
-              onClick={() => void selectSession(session.id)}
+              onClick={() => {
+                // Сессия выбрана — сразу показываем её сообщения, а не список.
+                setSidebarTab("messages");
+                void selectSession(session.id);
+              }}
               style={{
                 position: "absolute",
                 top: 0,

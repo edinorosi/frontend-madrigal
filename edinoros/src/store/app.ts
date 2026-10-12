@@ -17,9 +17,11 @@ import type {
   Capture,
   CheckResult,
   CheckRow,
+  Direction,
   Message,
   Model,
   Observation,
+  ParseStatus,
   Session,
 } from "@/src/types/domain";
 
@@ -34,6 +36,18 @@ export type LoadingKey =
 
 /** Откуда брать поля активного сообщения: из JSON или расчитывать моделью. */
 export type FieldsSource = "json" | "model";
+
+/**
+ * Фильтры списка сообщений. Живут в сторе, а не в состоянии компонента:
+ * смена таба сайдбара размонтирует список, и фильтры/скролл не должны
+ * теряться. "anomaly" — статусы «неизвестно» и «ошибка» (счётчик аномалий
+ * в статусбаре).
+ */
+export interface MessageFilter {
+  query: string;
+  direction: "all" | Direction;
+  status: "all" | "anomaly" | ParseStatus;
+}
 
 /** Предупреждение об устаревании (R9.2). */
 export interface StaleWarningState {
@@ -169,6 +183,8 @@ interface AppState {
   } | null;
   applyCaptureError: string | null;
   applyCapture: () => Promise<void>;
+  /** Отмена идущего «Применить к записи»: гасит токен и убирает прогресс. */
+  cancelApply: () => void;
 
   /** Откуда брать поля активного сообщения: из JSON или расчитывать моделью. */
   fieldsSource: FieldsSource;
@@ -188,6 +204,11 @@ interface AppState {
 
   sidebarTab: SidebarTab;
   sidebarCollapsed: boolean;
+
+  /** Фильтры списка сообщений — переживают смену таба сайдбара. */
+  messageFilter: MessageFilter;
+  /** Просьба фокусировать поле фильтра сообщений (Ctrl+F). */
+  messageFilterFocusTick: number;
 
   loading: Record<LoadingKey, boolean>;
   error: string | null;
@@ -234,6 +255,18 @@ interface AppState {
   toggleSidebar: () => void;
   /** Явная установка состояния сайдбара (автосвёрт на узких экранах). */
   setSidebarCollapsed: (collapsed: boolean) => void;
+  /** Частичное обновление фильтров сообщений. */
+  setMessageFilter: (patch: Partial<MessageFilter>) => void;
+  /** Сброс фильтров сообщений в значения по умолчанию. */
+  resetMessageFilter: () => void;
+  /** Фокус на поле фильтра сообщений (тик — сообщение для списка). */
+  focusMessageFilter: () => void;
+  /**
+   * Переход к смещению внутри активного сообщения (поле в статусбаре).
+   * Смещение зажимается в длину сообщения; само прокручивание дампа
+   * делает HEX-дамп по изменению selection.
+   */
+  gotoOffset: (offset: number) => void;
   startImport: (file: File) => Promise<void>;
   setImportProgress: (value: number) => void;
   cancelImport: () => void;
@@ -505,6 +538,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  cancelApply() {
+    // Токен гасит worker'ы: незавершённые сообщения не досчитываются.
+    applyToken += 1;
+    set({
+      applyCaptureProgress: null,
+      applyCaptureSummary: null,
+      applyCaptureError: null,
+    });
+  },
+
   fieldsSource: "json",
 
   overlayOpen: false,
@@ -513,6 +556,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sidebarTab: "sessions",
   sidebarCollapsed: false,
+
+  messageFilter: { query: "", direction: "all", status: "all" },
+  messageFilterFocusTick: 0,
 
   loading: NO_LOADING,
   error: null,
@@ -697,6 +743,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSelection(range) {
     set({ selection: range });
+  },
+
+  gotoOffset(offset) {
+    const { messages, activeMessageId } = get();
+    const message = messages.find((item) => item.id === activeMessageId);
+    if (!message || message.length === 0) return;
+
+    const clamped = Math.max(0, Math.min(offset, message.length - 1));
+    set({ selection: { offset: clamped, length: 1 } });
   },
 
   setHoveredField(fieldId) {
@@ -1349,6 +1404,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSidebarCollapsed(collapsed) {
     set({ sidebarCollapsed: collapsed });
+  },
+
+  setMessageFilter(patch) {
+    set((state) => ({ messageFilter: { ...state.messageFilter, ...patch } }));
+  },
+
+  resetMessageFilter() {
+    set({ messageFilter: { query: "", direction: "all", status: "all" } });
+  },
+
+  focusMessageFilter() {
+    set((state) => ({
+      messageFilterFocusTick: state.messageFilterFocusTick + 1,
+    }));
   },
 
   async startImport(file) {

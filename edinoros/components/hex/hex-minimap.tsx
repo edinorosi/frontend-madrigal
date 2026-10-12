@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type RefObject,
 } from "react";
@@ -89,6 +90,23 @@ export function HexMinimap({
       viewportEl.style.top = `${offset}px`;
       // Всё сообщение влезает — прямоугольник на всю высоту и не спорит за внимание.
       viewportEl.style.opacity = ratio >= 1 ? "0.4" : "1";
+
+      // ARIA: слайдер сообщает видимый диапазон (императивно, чтобы не гнать
+      // ре-рендеры от каждого скролла).
+      const topByte = Math.min(
+        length - 1,
+        Math.floor((scrollTop / scrollHeight) * length),
+      );
+      const visibleBytes = Math.max(
+        1,
+        Math.floor((clientHeight / scrollHeight) * length),
+      );
+      const endByte = Math.min(length - 1, topByte + visibleBytes - 1);
+      stripEl.setAttribute("aria-valuenow", String(topByte));
+      stripEl.setAttribute(
+        "aria-valuetext",
+        `видны байты ${topByte}–${endByte}`,
+      );
     };
 
     update();
@@ -145,11 +163,47 @@ export function HexMinimap({
     const stripEl = stripRef.current;
     if (!stripEl) return;
 
+    // Клик по полосе переводит на неё фокус — дальше она работает с клавиатуры.
+    stripEl.focus();
+
     const rect = stripEl.getBoundingClientRect();
     clickRatioRef.current = (event.clientY - rect.top) / rect.height;
     movedRef.current = false;
     setHover(null);
     setDragging(true);
+  };
+
+  // Клавиатура: полоса ведёт себя как ползунок прокрутки дампа.
+  const handleKeyDown = (event: ReactKeyboardEvent) => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+
+    const page = scrollEl.clientHeight * 0.9;
+    const line = 40;
+
+    switch (event.key) {
+      case "ArrowDown":
+        scrollEl.scrollBy({ top: line });
+        break;
+      case "ArrowUp":
+        scrollEl.scrollBy({ top: -line });
+        break;
+      case "PageDown":
+        scrollEl.scrollBy({ top: page });
+        break;
+      case "PageUp":
+        scrollEl.scrollBy({ top: -page });
+        break;
+      case "Home":
+        scrollEl.scrollTo({ top: 0 });
+        break;
+      case "End":
+        scrollEl.scrollTo({ top: scrollEl.scrollHeight });
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
   };
 
   const handleHover = (event: ReactMouseEvent) => {
@@ -192,12 +246,21 @@ export function HexMinimap({
     <div className={cn("relative flex h-full", className)}>
       <div
         ref={stripRef}
+        role="slider"
+        tabIndex={0}
+        aria-label="Мини-карта сообщения"
+        aria-orientation="vertical"
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, length - 1)}
+        aria-valuenow={0}
         onMouseDown={handleMouseDown}
+        onKeyDown={handleKeyDown}
         onMouseMove={handleHover}
         onMouseLeave={() => setHover(null)}
         className={cn(
           "relative h-full w-3 shrink-0 overflow-hidden rounded-sm",
-          "bg-muted/50 transition-colors",
+          "bg-muted/50 transition-colors outline-none",
+          "focus-visible:ring-1 focus-visible:ring-primary",
           dragging
             ? "cursor-grabbing ring-1 ring-primary/50"
             : "cursor-pointer",

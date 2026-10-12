@@ -18,6 +18,7 @@ import {
   HexContextMenu,
   type HexContextMenuItem,
 } from "@/components/hex/hex-context-menu";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -121,6 +122,7 @@ export function ModelEditor() {
   const saveModel = useAppStore((state) => state.saveModel);
   const removeModel = useAppStore((state) => state.removeModel);
   const applyCapture = useAppStore((state) => state.applyCapture);
+  const cancelApply = useAppStore((state) => state.cancelApply);
   const applyCaptureProgress = useAppStore(
     (state) => state.applyCaptureProgress,
   );
@@ -210,12 +212,34 @@ export function ModelEditor() {
     setSelectedRuleId(null);
   }, [saveModel, setActiveModel]);
 
+  // Удаление необратимо — спрашиваем: и кнопка, и пункт меню ведут сюда.
+  const [pendingDelete, setPendingDelete] = useState<
+    { kind: "model" | "rule"; id: string } | null
+  >(null);
+
   const handleDeleteModel = useCallback(
     async (modelId: string) => {
-      await removeModel(modelId);
+      setPendingDelete({ kind: "model", id: modelId });
     },
-    [removeModel],
+    [],
   );
+
+  const confirmPendingDelete = useCallback(async () => {
+    const pending = pendingDelete;
+    setPendingDelete(null);
+    if (!pending) return;
+
+    if (pending.kind === "model") {
+      await removeModel(pending.id);
+      return;
+    }
+    if (!activeModel) return;
+    const next = activeModel.rules.filter((item) => item.id !== pending.id);
+    await saveModel({ ...activeModel, rules: next });
+    setSelectedRuleId((current) =>
+      current === pending.id ? (next[0]?.id ?? null) : current,
+    );
+  }, [pendingDelete, activeModel, removeModel, saveModel]);
 
   const handleDuplicateModel = useCallback(
     async (modelId: string) => {
@@ -263,14 +287,9 @@ export function ModelEditor() {
 
   const handleDeleteRule = useCallback(
     async (ruleId: string) => {
-      if (!activeModel) return;
-      const next = activeModel.rules.filter((item) => item.id !== ruleId);
-      await saveModel({ ...activeModel, rules: next });
-      setSelectedRuleId((current) =>
-        current === ruleId ? (next[0]?.id ?? null) : current,
-      );
+      setPendingDelete({ kind: "rule", id: ruleId });
     },
-    [activeModel, saveModel],
+    [],
   );
 
   const handleDuplicateRule = useCallback(
@@ -438,6 +457,29 @@ export function ModelEditor() {
     handleDeleteRule,
   ]);
 
+  // Текст подтверждения удаления: имя объекта, если оно ещё известно.
+  const deleteConfirm = (() => {
+    const pending = pendingDelete;
+    if (pending === null) return null;
+    if (pending.kind === "rule") {
+      const name =
+        activeModel?.rules.find((item) => item.id === pending.id)?.name ?? "";
+      return {
+        title: "Удалить правило?",
+        description: name
+          ? `Правило «${name}» будет удалено из модели.`
+          : "Правило будет удалено из модели.",
+      };
+    }
+    const name = models?.find((item) => item.id === pending.id)?.name ?? "";
+    return {
+      title: "Удалить модель?",
+      description: name
+        ? `Модель «${name}» будет удалена.`
+        : "Модель будет удалена.",
+    };
+  })();
+
   return (
     <div ref={rootRef} className="relative flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1">
@@ -478,10 +520,41 @@ export function ModelEditor() {
       {applyCaptureProgress !== null || applyCaptureSummary !== null || applyCaptureError !== null ? (
         <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-b bg-muted/30 px-3 py-1 font-mono text-[11px] text-muted-foreground">
           {applyCaptureProgress !== null ? (
-            <span>
-              Применение… {applyCaptureProgress.done} из{" "}
-              {applyCaptureProgress.total}
-            </span>
+            <>
+              <span>
+                Применение… {applyCaptureProgress.done} из{" "}
+                {applyCaptureProgress.total}
+              </span>
+              <div
+                role="progressbar"
+                aria-label="Прогресс применения модели"
+                aria-valuemin={0}
+                aria-valuemax={applyCaptureProgress.total}
+                aria-valuenow={applyCaptureProgress.done}
+                className="h-1.5 min-w-24 w-40 overflow-hidden rounded-full bg-border"
+              >
+                <div
+                  className="h-full bg-primary transition-[width] duration-100"
+                  style={{
+                    width: `${
+                      applyCaptureProgress.total > 0
+                        ? (applyCaptureProgress.done /
+                            applyCaptureProgress.total) *
+                          100
+                        : 0
+                    }%`,
+                  }}
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 px-1.5 text-[11px]"
+                onClick={cancelApply}
+              >
+                Отменить
+              </Button>
+            </>
           ) : null}
           {applyCaptureSummary !== null ? (
             <span>
@@ -590,7 +663,7 @@ export function ModelEditor() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="size-5 shrink-0 opacity-0 group-hover:opacity-100"
+                      className="size-5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
                       title="Удалить модель"
                       onClick={() => void handleDeleteModel(model.id)}
                     >
@@ -663,7 +736,7 @@ export function ModelEditor() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="size-5 shrink-0 opacity-0 group-hover:opacity-100"
+                    className="size-5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
                     title="Удалить правило"
                     onClick={() => void handleDeleteRule(rule.id)}
                   >
@@ -705,6 +778,14 @@ export function ModelEditor() {
           onClose={closeMenu}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={deleteConfirm !== null}
+        title={deleteConfirm?.title ?? "Удалить?"}
+        description={deleteConfirm?.description}
+        onConfirm={() => void confirmPendingDelete()}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

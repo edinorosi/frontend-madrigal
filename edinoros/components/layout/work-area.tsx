@@ -149,6 +149,20 @@ export function WorkArea() {
   const cancelImport = useAppStore((state) => state.cancelImport);
   const dismissImportError = useAppStore((state) => state.dismissImportError);
 
+  // Успех импорта — не состояние на все времена: показываем полосу ~3 с,
+  // после чего сбрасываем фиазу, чтобы баннер не возвращался при
+  // переустановке рабочей зоны (например, выход из редактора модели).
+  const [importDoneNotice, setImportDoneNotice] = useState(false);
+  useEffect(() => {
+    if (importPhase !== "done") return;
+    setImportDoneNotice(true);
+    const timer = window.setTimeout(() => {
+      setImportDoneNotice(false);
+      dismissImportError();
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [importPhase, dismissImportError]);
+
   const fieldsSource = useAppStore((state) => state.fieldsSource);
   const models = useAppStore((state) => state.models);
   const activeModelId = useAppStore((state) => state.activeModelId);
@@ -211,6 +225,20 @@ export function WorkArea() {
             variant="ghost"
             className="ml-auto"
             onClick={dismissImportError}
+          >
+            Скрыть
+          </Button>
+        </div>
+      ) : null}
+
+      {importDoneNotice && !importError ? (
+        <div className="flex shrink-0 items-center gap-3 border-b bg-ok/10 px-4 py-2">
+          <span className="text-xs text-ok">Запись загружена</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => setImportDoneNotice(false)}
           >
             Скрыть
           </Button>

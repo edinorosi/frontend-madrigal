@@ -7,6 +7,13 @@ import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { captureTitle, formatBytes } from "@/src/lib/format";
 import { useAppStore } from "@/src/store/app";
 
@@ -15,6 +22,9 @@ export function Topbar() {
     (state) =>
       state.captures.find((item) => item.id === state.activeCaptureId) ?? null,
   );
+  const captures = useAppStore((state) => state.captures);
+  const activeCaptureId = useAppStore((state) => state.activeCaptureId);
+  const selectCapture = useAppStore((state) => state.selectCapture);
 
   const compareMessageId = useAppStore((state) => state.compareMessageId);
   const activeMessageNumber = useAppStore(
@@ -58,9 +68,32 @@ export function Topbar() {
         )}
       </Button>
       <div className="flex min-w-0 items-center gap-2">
-        <span className="truncate text-sm font-medium">
-          {captureTitle(capture)}
-        </span>
+        {captures.length > 1 ? (
+          <Select
+            value={activeCaptureId ?? undefined}
+            onValueChange={(value) => void selectCapture(value)}
+          >
+            <SelectTrigger
+              size="sm"
+              className="h-6 max-w-56 border-transparent bg-transparent px-1.5 font-medium hover:bg-sidebar-accent"
+              aria-label="Активная запись"
+              title="Переключиться между записями"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {captures.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  <span className="truncate">{captureTitle(item)}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <span className="truncate text-sm font-medium">
+            {captureTitle(capture)}
+          </span>
+        )}
         {capture ? (
           <Badge
             variant="secondary"

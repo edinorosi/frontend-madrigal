@@ -70,9 +70,22 @@ export function MessageList() {
   const bytesA = useAppStore((state) => state.bytes);
   const bytesALoading = useAppStore((state) => state.loading.bytes);
 
-  const [query, setQuery] = useState("");
-  const [direction, setDirection] = useState<"all" | Direction>("all");
-  const [status, setStatus] = useState<"all" | ParseStatus>("all");
+  // Фильтры — в сторе: смена таба размонтирует список, терять их незачем.
+  const filter = useAppStore((state) => state.messageFilter);
+  const setMessageFilter = useAppStore((state) => state.setMessageFilter);
+  const resetMessageFilter = useAppStore((state) => state.resetMessageFilter);
+  const focusTick = useAppStore((state) => state.messageFilterFocusTick);
+  const overlayOpen = useAppStore((state) => state.overlayOpen);
+
+  const { query, direction, status } = filter;
+
+  const setQuery = (value: string) => setMessageFilter({ query: value });
+  const setDirection = (value: "all" | Direction) =>
+    setMessageFilter({ direction: value });
+  const setStatus = (value: "all" | "anomaly" | ParseStatus) =>
+    setMessageFilter({ status: value });
+
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [menuNotice, setMenuNotice] = useState<string | null>(null);
@@ -80,11 +93,22 @@ export function MessageList() {
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    // «1024» — номер пакета; ищем и по нему, как в диалоге сравнения.
+    const numberMatch = /^\d+$/.test(needle) ? Number(needle) : null;
 
     return messages.filter((message) => {
       if (direction !== "all" && message.direction !== direction) return false;
-      if (status !== "all" && message.status !== status) return false;
-      if (needle && !message.label.toLowerCase().includes(needle)) return false;
+      if (status === "anomaly") {
+        if (message.status === "parsed") return false;
+      } else if (status !== "all" && message.status !== status) {
+        return false;
+      }
+      if (needle) {
+        const inLabel = message.label.toLowerCase().includes(needle);
+        const byNumber =
+          numberMatch !== null && message.packetNumber === numberMatch;
+        if (!inLabel && !byNumber) return false;
+      }
       return true;
     });
   }, [messages, query, direction, status]);
@@ -96,6 +120,51 @@ export function MessageList() {
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
+
+  // Ctrl+F: тик из стора → фокус и выделение текста в поле фильтра.
+  // Отметка в ref не даёт красть фокус при каждом монтировании списка.
+  const handledFocusTickRef = useRef(focusTick);
+  useEffect(() => {
+    if (focusTick === 0 || focusTick === handledFocusTickRef.current) return;
+    handledFocusTickRef.current = focusTick;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusTick]);
+
+  // Активное сообщение всегда в поле зрения: при переходе из проверки,
+  // по J/K или из другого места списка доводим скролл до него.
+  useEffect(() => {
+    if (!activeMessageId) return;
+    const index = filtered.findIndex((item) => item.id === activeMessageId);
+    if (index < 0) return;
+    virtualizer.scrollToIndex(index, { align: "auto" });
+  }, [activeMessageId, filtered, virtualizer]);
+
+  // J/K — следующее/предыдущее сообщение, как в просмотрщиках логов.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isTypingTarget(event.target)) return;
+      // Открытое меню или диалог перехватывают клавиши.
+      if (overlayOpen) return;
+      const key = event.key.toLowerCase();
+      if (key !== "j" && key !== "k") return;
+      if (filtered.length === 0) return;
+
+      event.preventDefault();
+      const current = filtered.findIndex(
+        (item) => item.id === activeMessageId,
+      );
+      const next =
+        key === "j"
+          ? Math.min(filtered.length - 1, current < 0 ? 0 : current + 1)
+          : Math.max(0, current < 0 ? 0 : current - 1);
+      void selectMessage(filtered[next].id);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [filtered, activeMessageId, overlayOpen, selectMessage]);
 
   const closeMenu = useCallback(() => {
     setMenuNotice(null);
@@ -306,10 +375,11 @@ export function MessageList() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-col gap-1.5 border-b p-2">
         <Input
+          ref={inputRef}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Поиск по метке"
-          aria-label="Поиск по метке"
+          placeholder="Поиск по метке или №"
+          aria-label="Поиск по метке или номеру пакета"
           className="h-7 text-xs"
         />
         <div className="flex gap-1.5">
@@ -333,7 +403,9 @@ export function MessageList() {
 
           <Select
             value={status}
-            onValueChange={(value) => setStatus(value as "all" | ParseStatus)}
+            onValueChange={(value) =>
+              setStatus(value as "all" | "anomaly" | ParseStatus)
+            }
           >
             <SelectTrigger
               size="sm"
@@ -347,8 +419,23 @@ export function MessageList() {
               <SelectItem value="parsed">Разобрано</SelectItem>
               <SelectItem value="unknown">Неизвестно</SelectItem>
               <SelectItem value="error">Ошибка</SelectItem>
+              <SelectItem value="anomaly">Аномалии</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+          <span>
+            Показано {filtered.length} из {messages.length}
+          </span>
+          {query !== "" || direction !== "all" || status !== "all" ? (
+            <button
+              type="button"
+              className="rounded px-1 underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+              onClick={resetMessageFilter}
+            >
+              Сбросить фильтр
+            </button>
+          ) : null}
         </div>
       </div>
 

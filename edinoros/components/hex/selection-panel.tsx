@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Lightbulb, MessageSquarePlus, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -103,6 +103,14 @@ export function SelectionPanel({
   const canSave =
     mode === "field" ? name.trim().length > 0 : text.trim().length > 0;
 
+  // Ctrl/Cmd+Enter — сохранить из любого поля формы (как в интерпретации).
+  const handleFieldKeyDown = (event: ReactKeyboardEvent) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key !== "Enter") return;
+    if (saving || !canSave) return;
+    event.preventDefault();
+    void handleSave();
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
@@ -202,6 +210,7 @@ export function SelectionPanel({
                 autoFocus
                 value={name}
                 onChange={(event) => setName(event.target.value)}
+                onKeyDown={handleFieldKeyDown}
                 placeholder="имя поля"
                 className="h-7 text-xs"
               />
@@ -237,6 +246,7 @@ export function SelectionPanel({
               rows={3}
               value={text}
               onChange={(event) => setText(event.target.value)}
+              onKeyDown={handleFieldKeyDown}
               placeholder={
                 mode === "hypothesis"
                   ? "Формулировка гипотезы"

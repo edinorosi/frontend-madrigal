@@ -154,14 +154,36 @@ function formatOpcodes(opcodes: number[]): string {
 function CoverageBadge({
   coverage,
   loading,
+  error,
+  onRetry,
 }: {
   coverage: { covered: number[]; seen: number[] } | null;
   loading: boolean;
+  error: string | null;
+  onRetry: () => void;
 }) {
   if (loading) {
     return (
       <span className="shrink-0 text-[11px] text-muted-foreground">
         Опкоды: …
+      </span>
+    );
+  }
+  // Сбой сборки покрытия не должен выглядеть как «покрытия нет».
+  if (error) {
+    return (
+      <span
+        className="shrink-0 text-[11px] text-destructive"
+        title={error}
+      >
+        Опкоды: ошибка
+        <button
+          type="button"
+          className="ml-1 rounded px-0.5 underline underline-offset-2 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          onClick={onRetry}
+        >
+          Повторить
+        </button>
       </span>
     );
   }
@@ -383,7 +405,12 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
           )}
         </span>
         {/* Покрытие опкодов (R4.2). */}
-        <CoverageBadge coverage={coverage} loading={coverageLoading} />
+        <CoverageBadge
+          coverage={coverage}
+          loading={coverageLoading}
+          error={coverageError}
+          onRetry={() => void loadCheckCoverage()}
+        />
         {result ? (
           <>
             <span className="shrink-0 text-[11px] text-muted-foreground">

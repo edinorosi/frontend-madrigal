@@ -13,15 +13,20 @@ import {
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  ChevronDown,
+  ChevronUp,
   Copy,
   FileSearch,
   Lightbulb,
   MessageSquarePlus,
+  Search,
   Tag,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isTypingTarget } from "@/src/lib/keyboard";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   HexContextMenu,
   type HexContextMenuItem,
@@ -56,6 +61,28 @@ const EDGE_BAND = 0.12;
 const MIN_EDGE_BAND = 24;
 /** Пикселей за кадр у самой границы. */
 const AUTOSCROLL_SPEED = 16;
+/** Потолок найденных совпадений: дальше перебор не нужен, UI их не осилит. */
+const MAX_SEARCH_MATCHES = 2000;
+
+/**
+ * Строка поиска → байтовый шаблон. «0A 1B» и «0a1b» читаются как hex,
+ * всё остальное — как текст (UTF-8).
+ */
+function parseSearchNeedle(query: string): Uint8Array | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+
+  const compact = trimmed.replace(/[\s,:]+/g, "");
+  if (compact.length > 0 && compact.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(compact)) {
+    const out = new Uint8Array(compact.length / 2);
+    for (let index = 0; index < out.length; index += 1) {
+      out[index] = Number.parseInt(compact.slice(index * 2, index * 2 + 2), 16);
+    }
+    return out;
+  }
+
+  return new TextEncoder().encode(trimmed);
+}
 
 interface PanelState {
   range: ByteRange;
@@ -142,6 +169,126 @@ export function HexDump({
     estimateSize: () => ROW_HEIGHT,
     overscan: 24,
   });
+
+  /* ── Поиск по байтам (hex-паттерн или текст) ─────────────────────── */
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndex, setSearchIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const searchNeedle = useMemo(
+    () => parseSearchNeedle(searchQuery),
+    [searchQuery],
+  );
+
+  const searchMatches = useMemo(() => {
+    if (!searchNeedle || searchNeedle.length === 0) return [];
+    if (searchNeedle.length > bytes.length) return [];
+
+    const found: number[] = [];
+    const last = bytes.length - searchNeedle.length;
+    for (let offset = 0; offset <= last; offset += 1) {
+      let hit = true;
+      for (let inner = 0; inner < searchNeedle.length; inner += 1) {
+        if (bytes[offset + inner] !== searchNeedle[inner]) {
+          hit = false;
+          break;
+        }
+      }
+      if (!hit) continue;
+      found.push(offset);
+      if (found.length >= MAX_SEARCH_MATCHES) break;
+    }
+    return found;
+  }, [bytes, searchNeedle]);
+
+  const searchMask = useMemo(() => {
+    if (!searchNeedle || searchMatches.length === 0) return null;
+    const mask = new Uint8Array(bytes.length);
+    for (const offset of searchMatches) {
+      mask.fill(1, offset, Math.min(bytes.length, offset + searchNeedle.length));
+    }
+    return mask;
+  }, [bytes.length, searchMatches, searchNeedle]);
+
+  // Новый запрос или новое сообщение — снова с первого совпадения.
+  useEffect(() => {
+    setSearchIndex(0);
+  }, [searchQuery, bytes]);
+
+  const currentMatchOffset =
+    searchMatches.length > 0
+      ? searchMatches[Math.min(searchIndex, searchMatches.length - 1)]
+      : null;
+
+  // Совпадение должно быть видно: доводим виртуальный список до его строки.
+  useEffect(() => {
+    if (!searchOpen || currentMatchOffset === null) return;
+    virtualizer.scrollToIndex(
+      Math.floor(currentMatchOffset / BYTES_PER_ROW),
+      { align: "center" },
+    );
+  }, [searchOpen, currentMatchOffset, virtualizer]);
+
+  const stepSearchMatch = useCallback(
+    (direction: 1 | -1) => {
+      setSearchIndex((current) => {
+        if (searchMatches.length === 0) return 0;
+        const base = Math.min(current, searchMatches.length - 1);
+        return (base + direction + searchMatches.length) % searchMatches.length;
+      });
+    },
+    [searchMatches.length],
+  );
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    scrollRef.current?.focus();
+  }, [scrollRef]);
+
+  const handleSearchKeyDown = useCallback(
+    (event: ReactKeyboardEvent) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        stepSearchMatch(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeSearch();
+      }
+    },
+    [stepSearchMatch, closeSearch],
+  );
+
+  // Ctrl+F внутри дампа — поиск по байтам. Глобальный Ctrl+F (список
+  // сообщений) перехватывает сайдбар, кроме случая, когда фокус здесь.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        !((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f")
+      ) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (!target.closest("[data-hex-root]")) return;
+      if (isTypingTarget(target)) return;
+
+      event.preventDefault();
+      openSearch();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [openSearch]);
 
   /** Маска непокрытых байтов: 1 — байт вне покрытия модели (R9.1). */
   const uncoveredMask = useMemo(() => {
@@ -827,11 +974,101 @@ export function HexDump({
     ? `Выделено ${selection.length} байт с offset ${selection.offset}`
     : "Выделения нет";
 
+  const matchPosition =
+    searchMatches.length > 0
+      ? `${Math.min(searchIndex, searchMatches.length - 1) + 1} / ${
+          searchMatches.length >= MAX_SEARCH_MATCHES
+            ? `${searchMatches.length}+`
+            : searchMatches.length
+        }`
+      : null;
+  const searchStatus =
+    searchNeedle === null
+      ? ""
+      : searchMatches.length > 0
+        ? (matchPosition ?? "")
+        : "нет совпадений";
+
   return (
-    <div className="relative h-full min-h-0">
+    <div data-hex-root className="relative flex h-full min-h-0 flex-col">
       <div aria-live="polite" className="sr-only">
         {selectionAnnounce}
       </div>
+      {searchOpen ? (
+        <div aria-live="polite" className="sr-only">
+          {searchMatches.length > 0
+            ? `Совпадение ${
+                Math.min(searchIndex, searchMatches.length - 1) + 1
+              } из ${searchMatches.length}`
+            : searchNeedle
+              ? "Совпадений нет"
+              : ""}
+        </div>
+      ) : null}
+
+      {/* Строка поиска: поле, счётчик, переходы между совпадениями. */}
+      <div className="flex shrink-0 items-center gap-1.5 border-b px-2 py-1">
+        {searchOpen ? (
+          <>
+            <Input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="0A 1B или текст"
+              aria-label="Поиск по байтам сообщения"
+              className="h-6 w-44 font-mono text-xs"
+            />
+            <span
+              className="min-w-16 text-[11px] text-muted-foreground"
+              aria-hidden="true"
+            >
+              {searchStatus}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              title="Предыдущее совпадение (Shift+Enter)"
+              disabled={searchMatches.length === 0}
+              onClick={() => stepSearchMatch(-1)}
+            >
+              <ChevronUp className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              title="Следующее совпадение (Enter)"
+              disabled={searchMatches.length === 0}
+              onClick={() => stepSearchMatch(1)}
+            >
+              <ChevronDown className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              title="Закрыть поиск (Esc)"
+              onClick={closeSearch}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto size-6"
+            title="Поиск по байтам (Ctrl+F)"
+            aria-label="Поиск по байтам"
+            onClick={openSearch}
+          >
+            <Search className="size-3.5" />
+          </Button>
+        )}
+      </div>
+
       <div
         ref={scrollRef}
         tabIndex={0}
@@ -840,7 +1077,7 @@ export function HexDump({
         aria-rowcount={rowCount}
         onContextMenu={handleContextMenu}
         onKeyDown={handleGridKeyDown}
-        className="no-scrollbar h-full overflow-auto font-mono text-xs select-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
+        className="no-scrollbar min-h-0 flex-1 overflow-auto font-mono text-xs select-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
       >
         <div
           className="relative w-full"
@@ -864,6 +1101,17 @@ export function HexDump({
               contextByte={contextByte}
               diffMask={diffMask ?? null}
               uncoveredMask={uncoveredMask ?? null}
+              searchMask={searchMask}
+              searchStart={
+                currentMatchOffset !== null && searchNeedle
+                  ? currentMatchOffset
+                  : null
+              }
+              searchEnd={
+                currentMatchOffset !== null && searchNeedle
+                  ? currentMatchOffset + searchNeedle.length
+                  : null
+              }
               onByteMouseDown={stableByteMouseDown}
             />
           ))}
@@ -923,6 +1171,9 @@ const HexRow = memo(function HexRow({
   contextByte,
   diffMask,
   uncoveredMask,
+  searchMask,
+  searchStart,
+  searchEnd,
   onByteMouseDown,
 }: {
   rowIndex: number;
@@ -936,6 +1187,9 @@ const HexRow = memo(function HexRow({
   contextByte: number | null;
   diffMask: Uint8Array | null;
   uncoveredMask: Uint8Array | null;
+  searchMask: Uint8Array | null;
+  searchStart: number | null;
+  searchEnd: number | null;
   onByteMouseDown: (event: ReactMouseEvent, index: number) => void;
 }) {
   const rowStart = rowIndex * BYTES_PER_ROW;
@@ -977,6 +1231,8 @@ const HexRow = memo(function HexRow({
           const targeted = contextByte === index;
           const diffed = diffMask?.[index] === 1;
           const uncovered = uncoveredMask?.[index] === 1;
+          const searchHit = searchMask?.[index] === 1;
+          const inCurrentMatch = inRange(searchStart, searchEnd, index);
 
           return (
             <span
@@ -998,6 +1254,17 @@ const HexRow = memo(function HexRow({
                 !selected && !diffed && highlighted && "bg-warn/25",
                 !selected && !diffed && !highlighted && uncovered && "bg-muted/60",
                 !selected && !diffed && !highlighted && "hover:bg-muted",
+                !selected &&
+                  !diffed &&
+                  !highlighted &&
+                  inCurrentMatch &&
+                  "bg-primary/50 ring-1 ring-primary",
+                !selected &&
+                  !diffed &&
+                  !highlighted &&
+                  !inCurrentMatch &&
+                  searchHit &&
+                  "bg-primary/20",
                 targeted && "bg-primary/20 ring-1 ring-primary",
               )}
             >
@@ -1019,6 +1286,8 @@ const HexRow = memo(function HexRow({
           const targeted = contextByte === index;
           const diffed = diffMask?.[index] === 1;
           const uncovered = uncoveredMask?.[index] === 1;
+          const searchHit = searchMask?.[index] === 1;
+          const inCurrentMatch = inRange(searchStart, searchEnd, index);
 
           return (
             <span
@@ -1035,6 +1304,18 @@ const HexRow = memo(function HexRow({
                 !selected && diffed && "bg-diff/40",
                 !selected && !diffed && highlighted && "bg-warn/25",
                 !selected && !diffed && !highlighted && uncovered && "bg-muted/60",
+                !selected && !diffed && !highlighted && "hover:bg-muted",
+                !selected &&
+                  !diffed &&
+                  !highlighted &&
+                  inCurrentMatch &&
+                  "bg-primary/50 ring-1 ring-primary",
+                !selected &&
+                  !diffed &&
+                  !highlighted &&
+                  !inCurrentMatch &&
+                  searchHit &&
+                  "bg-primary/20",
                 targeted && "bg-primary/20 ring-1 ring-primary",
               )}
             >

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Download,
   FileJson,
@@ -41,6 +41,25 @@ export function ExportButton() {
   const importKindRef = useRef<"model" | "project">("model");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  const showNotice = (text: string) => {
+    setNotice(text);
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 3000);
+  };
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const capture = useAppStore(
     (state) =>
@@ -55,11 +74,15 @@ export function ExportButton() {
   const importProject = useAppStore((state) => state.importProject);
   const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
 
-  const runExport = async (action: () => Promise<void>) => {
+  const runExport = async (
+    action: () => Promise<void>,
+    successText: string,
+  ) => {
     setBusy(true);
     setError(null);
     try {
       await action();
+      showNotice(successText);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Ошибка экспорта");
     } finally {
@@ -78,14 +101,14 @@ export function ExportButton() {
         buildModelReadme(activeModel, name),
         "text/markdown",
       );
-    });
+    }, "Модель и описание скачаны");
 
   const handleExportReport = () =>
     runExport(async () => {
       const data = await collectExportData();
       const markdown = buildReportMarkdown(data);
       downloadText(reportFileName(data.capture?.fileName ?? null), markdown, "text/markdown");
-    });
+    }, "Отчёт скачан");
 
   const handleExportProject = () =>
     runExport(async () => {
@@ -97,7 +120,7 @@ export function ExportButton() {
         fieldsSource: useAppStore.getState().fieldsSource,
       });
       downloadJson(projectFileName(data.capture?.fileName ?? null), project);
-    });
+    }, "Проект скачан");
 
   const handleImportFile = () =>
     runExport(async () => {
@@ -108,7 +131,7 @@ export function ExportButton() {
       } else {
         await importProject(file);
       }
-    });
+    }, "Импорт завершён");
 
   return (
     <>
@@ -128,6 +151,14 @@ export function ExportButton() {
           title={error}
         >
           {error}
+        </span>
+      ) : notice ? (
+        <span
+          role="status"
+          className="max-w-48 truncate text-[11px] text-ok"
+          aria-live="polite"
+        >
+          {notice}
         </span>
       ) : null}
       <DropdownMenu onOpenChange={setOverlayOpen}>

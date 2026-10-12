@@ -49,6 +49,8 @@ const PANEL_GAP = 6;
 const PANEL_MIN_HEIGHT = 38;
 /** Сколько держать обратную связь в меню перед закрытием. */
 const NOTICE_MS = 700;
+/** Уведомление о копировании показывается вне меню — дольше, чтобы успеть прочитать. */
+const COPY_NOTICE_MS = 2000;
 /** Доля высоты у края, в которой включается автопрокрутка при протяжке. */
 const EDGE_BAND = 0.12;
 const MIN_EDGE_BAND = 24;
@@ -370,6 +372,41 @@ export function HexDump({
    * выделение от якоря, Home/End — граница строки (Ctrl — потока), PageUp/Down —
    * экран, Ctrl+A — всё сообщение.
    */
+  const showNotice = useCallback((message: string, duration = NOTICE_MS) => {
+    setMenuNotice(message);
+
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+
+    noticeTimerRef.current = window.setTimeout(() => {
+      setMenuNotice(null);
+      setMenu(null);
+    }, duration);
+  }, []);
+
+  const copyRange = useCallback(
+    async (range: ByteRange) => {
+      if (!navigator.clipboard) {
+        showNotice("Буфер обмена недоступен");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(toHexText(bytes, range));
+        showNotice(
+          `Скопировано: ${range.length} ${
+            range.length === 1 ? "байт" : "байт(ов)"
+          }`,
+          COPY_NOTICE_MS,
+        );
+      } catch {
+        showNotice("Не удалось скопировать");
+      }
+    },
+    [bytes, showNotice],
+  );
+
   const handleGridKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
       const pageSize =
@@ -416,6 +453,17 @@ export function HexDump({
             onSelect({ offset: 0, length: bytes.length });
           }
           return;
+        case "c":
+        case "C":
+          if (event.ctrlKey || event.metaKey) {
+            event.preventDefault();
+            if (selection) {
+              void copyRange(selection);
+            } else {
+              showNotice("Выделение отсутствует", COPY_NOTICE_MS);
+            }
+          }
+          return;
         default:
           return;
       }
@@ -433,7 +481,15 @@ export function HexDump({
         onSelect({ offset: clamped, length: 1 });
       }
     },
-    [bytes.length, onSelect, scrollRef, selection, virtualizer],
+    [
+      bytes.length,
+      copyRange,
+      onSelect,
+      scrollRef,
+      selection,
+      showNotice,
+      virtualizer,
+    ],
   );
 
   /**
@@ -615,40 +671,6 @@ export function HexDump({
     computePanel,
     scrollRef,
   ]);
-
-  const showNotice = useCallback((message: string) => {
-    setMenuNotice(message);
-
-    if (noticeTimerRef.current !== null) {
-      window.clearTimeout(noticeTimerRef.current);
-    }
-
-    noticeTimerRef.current = window.setTimeout(() => {
-      setMenuNotice(null);
-      setMenu(null);
-    }, NOTICE_MS);
-  }, []);
-
-  const copyRange = useCallback(
-    async (range: ByteRange) => {
-      if (!navigator.clipboard) {
-        showNotice("Буфер обмена недоступен");
-        return;
-      }
-
-      try {
-        await navigator.clipboard.writeText(toHexText(bytes, range));
-        showNotice(
-          `Скопировано: ${range.length} ${
-            range.length === 1 ? "байт" : "байт(ов)"
-          }`,
-        );
-      } catch {
-        showNotice("Не удалось скопировать");
-      }
-    },
-    [bytes, showNotice],
-  );
 
   const openPanelFromMenu = useCallback(
     (range: ByteRange, mode: SelectionPanelMode) => {
@@ -857,6 +879,16 @@ export function HexDump({
           notice={menuNotice}
           onClose={closeMenu}
         />
+      ) : null}
+
+      {/* Уведомление без открытого меню (Ctrl+C, ошибки буфера). */}
+      {menuNotice && !menu ? (
+        <div
+          role="status"
+          className="pointer-events-none absolute right-3 bottom-3 z-20 rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs shadow-md text-muted-foreground"
+        >
+          {menuNotice}
+        </div>
       ) : null}
 
       {panel ? (

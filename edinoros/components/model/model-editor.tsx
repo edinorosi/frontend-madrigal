@@ -7,10 +7,13 @@ import {
   ArrowUp,
   Check,
   Copy,
+  Download,
   Pencil,
   Play,
   Plus,
+  Radar,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isTypingTarget } from "@/src/lib/keyboard";
@@ -31,6 +34,12 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createId } from "@/src/lib/ids";
+import { downloadJson } from "@/src/lib/export/download";
+import {
+  buildRuleExport,
+  parseRuleExport,
+  ruleFileName,
+} from "@/src/lib/export/rule-export";
 import {
   MODEL_STATUS_LABEL,
   MODEL_STATUS_TONE,
@@ -123,6 +132,8 @@ export function ModelEditor() {
   const removeModel = useAppStore((state) => state.removeModel);
   const applyCapture = useAppStore((state) => state.applyCapture);
   const cancelApply = useAppStore((state) => state.cancelApply);
+  const analyzePatterns = useAppStore((state) => state.analyzePatterns);
+  const patternLoading = useAppStore((state) => state.patternLoading);
   const applyCaptureProgress = useAppStore(
     (state) => state.applyCaptureProgress,
   );
@@ -285,6 +296,73 @@ export function ModelEditor() {
     setSelectedRuleId(rule.id);
   }, [activeModel, saveModel]);
 
+  /* ── Обмен правилами: экспорт одного правила, импорт в активную модель ── */
+
+  const [ruleNotice, setRuleNotice] = useState<{
+    text: string;
+    isError: boolean;
+  } | null>(null);
+  const ruleNoticeTimerRef = useRef<number | null>(null);
+  const ruleImportInputRef = useRef<HTMLInputElement>(null);
+
+  const showRuleNotice = useCallback((text: string, isError: boolean) => {
+    setRuleNotice({ text, isError });
+    if (ruleNoticeTimerRef.current !== null) {
+      window.clearTimeout(ruleNoticeTimerRef.current);
+    }
+    ruleNoticeTimerRef.current = window.setTimeout(
+      () => setRuleNotice(null),
+      3000,
+    );
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (ruleNoticeTimerRef.current !== null) {
+        window.clearTimeout(ruleNoticeTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const handleExportRule = useCallback(
+    (ruleId: string) => {
+      if (!activeModel) return;
+      const rule = activeModel.rules.find((item) => item.id === ruleId);
+      if (!rule) return;
+      downloadJson(
+        ruleFileName(rule),
+        buildRuleExport(rule, {
+          id: activeModel.id,
+          name: activeModel.name,
+        }),
+      );
+    },
+    [activeModel],
+  );
+
+  const handleImportRuleFile = useCallback(
+    async (file: File) => {
+      if (!activeModel) return;
+      try {
+        const rule = parseRuleExport(await file.text());
+        await saveModel({
+          ...activeModel,
+          rules: [...activeModel.rules, rule],
+        });
+        showRuleNotice(`Правило «${rule.name}» добавлено`, false);
+      } catch (error) {
+        showRuleNotice(
+          error instanceof Error
+            ? error.message
+            : "Не удалось импортировать правило",
+          true,
+        );
+      }
+    },
+    [activeModel, saveModel, showRuleNotice],
+  );
+
   const handleDeleteRule = useCallback(
     async (ruleId: string) => {
       setPendingDelete({ kind: "rule", id: ruleId });
@@ -410,6 +488,15 @@ export function ModelEditor() {
         void handleDuplicateRule(menu.ruleId);
       },
     });
+    items.push({
+      id: "export",
+      label: "Экспорт правила (JSON)",
+      icon: Download,
+      onSelect: () => {
+        closeMenu();
+        handleExportRule(menu.ruleId);
+      },
+    });
     if (index > 0) {
       items.push({
         id: "up",
@@ -455,6 +542,7 @@ export function ModelEditor() {
     handleDuplicateRule,
     handleMoveRule,
     handleDeleteRule,
+    handleExportRule,
   ]);
 
   // Текст подтверждения удаления: имя объекта, если оно ещё известно.
@@ -504,17 +592,70 @@ export function ModelEditor() {
             />
           </>
         ) : null}
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-auto h-7 gap-1 px-2"
-          disabled={!activeModel || applyCaptureProgress !== null}
-          title="Пересчитать поля всех сообщений записи этой моделью"
-          onClick={() => void applyCapture()}
-        >
-          <Play className="size-3.5" />
-          Применить к записи
-        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {ruleNotice ? (
+            <span
+              role="status"
+              className={cn(
+                "text-[11px]",
+                ruleNotice.isError ? "text-destructive" : "text-muted-foreground",
+              )}
+            >
+              {ruleNotice.text}
+            </span>
+          ) : null}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2"
+            disabled={patternLoading}
+            title="Просканировать байты активной записи и предложить модель"
+            onClick={() => {
+              void analyzePatterns().then((found) => {
+                if (!found) showRuleNotice("Паттерны не обнаружены", false);
+              });
+            }}
+          >
+            <Radar className="size-3.5" />
+            Распознать паттерны
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2"
+            disabled={!activeModel}
+            title="Добавить правило из JSON-файла в активную модель"
+            onClick={() => ruleImportInputRef.current?.click()}
+          >
+            <Upload className="size-3.5" />
+            Импорт правила
+          </Button>
+          <input
+            ref={ruleImportInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              // Сброс нужен, чтобы тот же файл можно было выбрать повторно.
+              event.target.value = "";
+              if (file) void handleImportRuleFile(file);
+            }}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2"
+            disabled={!activeModel || applyCaptureProgress !== null}
+            title="Пересчитать поля всех сообщений записи этой моделью"
+            onClick={() => void applyCapture()}
+          >
+            <Play className="size-3.5" />
+            Применить к записи
+          </Button>
+        </div>
       </div>
 
       {applyCaptureProgress !== null || applyCaptureSummary !== null || applyCaptureError !== null ? (
@@ -733,6 +874,15 @@ export function ModelEditor() {
                       </span>
                     </span>
                   </button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                    title="Экспорт правила (JSON)"
+                    onClick={() => handleExportRule(rule.id)}
+                  >
+                    <Download className="size-3" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

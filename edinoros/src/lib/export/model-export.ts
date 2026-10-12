@@ -97,7 +97,8 @@ export function parseModelExport(raw: string): Model {
   return { id: createId("model"), name, status, rules, createdAt };
 }
 
-function parseRule(raw: unknown, index: number): ModelRule {
+/** Разбор одного правила; бросает Error с русским сообщением. */
+export function parseRule(raw: unknown, index: number): ModelRule {
   const rule = asRecord(raw, `правило ${index + 1}: ожидался объект`);
   const name =
     typeof rule.name === "string" && rule.name.trim().length > 0

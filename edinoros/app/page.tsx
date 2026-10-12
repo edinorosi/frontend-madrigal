@@ -8,6 +8,7 @@ import { Topbar } from "@/components/layout/topbar";
 import { WorkArea } from "@/components/layout/work-area";
 import { ModelEditor } from "@/components/model/model-editor";
 import { StaleWarningDialog } from "@/components/model/stale-warning-dialog";
+import { PatternDialog } from "@/components/import/pattern-dialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/src/store/app";
 
@@ -92,6 +93,7 @@ export default function Page() {
       )}
       <Statusbar />
       <StaleWarningDialog />
+      <PatternDialog />
       <DevMenu />
 
       {dragOver ? (

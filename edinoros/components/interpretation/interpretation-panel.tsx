@@ -27,6 +27,10 @@ import {
   type HexContextMenuItem,
 } from "@/components/hex/hex-context-menu";
 import { ReferenceChip } from "@/components/reference-chip";
+import {
+  FieldsTable,
+  computeFieldRows,
+} from "@/components/interpretation/fields-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,7 +50,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { describeRange, formatOffset } from "@/src/lib/hex";
+import { describeRange } from "@/src/lib/hex";
 import {
   MODEL_STATUS_LABEL,
   MODEL_STATUS_TONE,
@@ -295,6 +299,8 @@ export function InterpretationPanel({
   const models = useAppStore((state) => state.models);
   const activeModelId = useAppStore((state) => state.activeModelId);
   const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
+  const messages = useAppStore((state) => state.messages);
+  const getMessageBytes = useAppStore((state) => state.getMessageBytes);
 
   /** Имена правил по id — подпись «правило: X» у наблюдений (R9.2). */
   const ruleNamesById = useMemo(() => {
@@ -320,6 +326,72 @@ export function InterpretationPanel({
 
   const displayedFields =
     fieldsSource === "model" ? (modelApply?.fields ?? []) : message?.fields ?? [];
+
+  /**
+   * Дельта к предыдущему сообщению: ближайшее в том же потоке с тем же
+   * направлением и меньшим номером пакета. Для JSON-источника поля
+   * предыдущего уже в сторе; для «Модель» — тихо подгружаем его байты
+   * (не трогая активные `bytes` и состояние загрузки).
+   */
+  const prevMessage = useMemo(() => {
+    if (!message) return null;
+    let best: Message | null = null;
+    for (const item of messages) {
+      if (item.sessionId !== message.sessionId) continue;
+      if (item.direction !== message.direction) continue;
+      if (item.packetNumber >= message.packetNumber) continue;
+      if (best === null || item.packetNumber > best.packetNumber) best = item;
+    }
+    return best;
+  }, [messages, message]);
+
+  const [prevBytes, setPrevBytes] = useState<{
+    messageId: string;
+    bytes: Uint8Array;
+  } | null>(null);
+
+  useEffect(() => {
+    if (fieldsSource !== "model" || prevMessage === null) {
+      setPrevBytes(null);
+      return;
+    }
+    let alive = true;
+    void getMessageBytes(prevMessage.id).then(
+      (loaded) => {
+        if (alive) setPrevBytes({ messageId: prevMessage.id, bytes: loaded });
+      },
+      () => {
+        if (alive) setPrevBytes(null);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [fieldsSource, prevMessage, getMessageBytes]);
+
+  const prevApply = useMemo(() => {
+    if (
+      fieldsSource !== "model" ||
+      prevMessage === null ||
+      prevBytes === null ||
+      prevBytes.messageId !== prevMessage.id ||
+      !activeModel
+    ) {
+      return null;
+    }
+    return applyModelCached(prevMessage.id, prevBytes.bytes, activeModel);
+  }, [fieldsSource, prevMessage, prevBytes, activeModel]);
+
+  const prevFields = useMemo(() => {
+    if (prevMessage === null) return null;
+    if (fieldsSource === "json") return prevMessage.fields;
+    return prevApply ? prevApply.fields : null;
+  }, [prevMessage, fieldsSource, prevApply]);
+
+  const fieldRows = useMemo(
+    () => computeFieldRows(displayedFields, prevFields),
+    [displayedFields, prevFields],
+  );
 
   const [menu, setMenu] = useState<ObservationMenuState | null>(null);
   const [menuNotice, setMenuNotice] = useState<string | null>(null);
@@ -643,54 +715,16 @@ export function InterpretationPanel({
                 Модель не выделила поля в этом сообщении
               </p>
             ) : (
-              <ul className="flex flex-col">
-                {displayedFields.map((field) => (
-                  <li
-                    key={field.id}
-                    title={
-                      field.ruleId && modelApply?.ruleName
-                        ? `Правило: ${modelApply.ruleName}`
-                        : undefined
-                    }
-                    onMouseEnter={() => onHoverField(field.id)}
-                    onMouseLeave={() => onHoverField(null)}
-                    className={cn(
-                      "flex flex-col gap-0.5 rounded px-1.5 py-1 transition-colors",
-                      hoveredFieldId === field.id && "bg-muted",
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs">{field.name}</span>
-                      <span className="font-mono text-[10px] text-muted-foreground">
-                        {field.type}
-                      </span>
-                      <span className="ml-auto font-mono text-xs">
-                        {field.value}
-                      </span>
-                      <ReferenceChip
-                        kind="bytes"
-                        label={formatOffset(field.range.offset).slice(-2)}
-                        preview={`${describeRange(field.range)} · пакет #${message.packetNumber}`}
-                        onSelect={() =>
-                          onSelectRange(field.range.offset, field.range.length)
-                        }
-                      />
-                    </div>
-                    {field.note || (field.ruleId && fieldsSource === "model") ? (
-                      <span className="text-[10px] text-muted-foreground">
-                        {[
-                          field.note,
-                          field.ruleId && fieldsSource === "model"
-                            ? `правило: ${modelApply?.ruleName ?? field.ruleId}`
-                            : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
-                    ) : null}
-                </li>
-              ))}
-              </ul>
+              <FieldsTable
+                rows={fieldRows}
+                packetNumber={message.packetNumber}
+                hoveredFieldId={hoveredFieldId}
+                onHoverField={onHoverField}
+                onSelectRange={onSelectRange}
+                ruleName={
+                  fieldsSource === "model" ? (modelApply?.ruleName ?? null) : null
+                }
+              />
             )}
 
             {/* Непокрытые области (R9.1): байты, которые правило не описало. */}

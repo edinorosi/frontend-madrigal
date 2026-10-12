@@ -11,12 +11,19 @@ import { applyModelCached, invalidateApplyCache } from "@/src/lib/parse";
 import { resolveObservationStatus } from "@/src/lib/observations";
 import { parseModelExport } from "@/src/lib/export/model-export";
 import { parseProjectExport } from "@/src/lib/export/project-export";
+import {
+  analyzeCapture,
+  PATTERN_SAMPLE_LIMIT,
+  type MessageSample,
+  type PatternSuggestion,
+} from "@/src/lib/patterns";
 import type { ApplySummary, ExportData } from "@/src/lib/export/report";
 import type {
   ByteRange,
   Capture,
   CheckResult,
   CheckRow,
+  CheckStatus,
   Direction,
   Message,
   Model,
@@ -48,6 +55,19 @@ export interface MessageFilter {
   direction: "all" | Direction;
   status: "all" | "anomaly" | ParseStatus;
 }
+
+/**
+ * Фильтры таблицы проверок. Как и фильтры сообщений — в сторе:
+ * панель проверки сворачивается, фильтры не должны теряться.
+ */
+export interface CheckFilter {
+  /** Поиск по действию, времени, «Ожидалось», «Извлечено». */
+  query: string;
+  status: "all" | CheckStatus;
+}
+
+/** Фильтр проверок по умолчанию. */
+export const DEFAULT_CHECK_FILTER: CheckFilter = { query: "", status: "all" };
 
 /** Предупреждение об устаревании (R9.2). */
 export interface StaleWarningState {
@@ -118,6 +138,12 @@ interface AppState {
   checkCaptureIds: string[] | null;
   /** Выбор записей для проверки; null — вернуть «все записи». */
   setCheckCaptureIds: (ids: string[] | null) => void;
+  /** Фильтры таблицы проверок (поиск + статус). */
+  checkFilter: CheckFilter;
+  /** Частичное обновление фильтров проверки. */
+  setCheckFilter: (patch: Partial<CheckFilter>) => void;
+  /** Сброс фильтров проверки. */
+  resetCheckFilter: () => void;
   /**
    * Покрытие опкодов (R4.2): какие опкоды есть в правилах модели
    * (covered) и какие реально встречены в выбранных записях (seen).
@@ -218,6 +244,19 @@ interface AppState {
   importProgress: number;
   importError: string | null;
 
+  /**
+   * Авто-паттерны: находки по байтам активной записи и черновик модели.
+   * Не null — открыт диалог предложения (после импорта или вручную).
+   */
+  patternSuggestion: PatternSuggestion | null;
+  patternLoading: boolean;
+  /** Анализ байтов активной записи; true — есть что показать. */
+  analyzePatterns: () => Promise<boolean>;
+  /** Создать предложенную модель и сделать её активной. */
+  acceptPatternSuggestion: () => Promise<void>;
+  /** Отклонить предложение (и отменить идущий анализ). */
+  dismissPatternSuggestion: () => void;
+
   loadProject: () => Promise<void>;
   selectCapture: (captureId: string) => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
@@ -295,6 +334,8 @@ function describeError(error: unknown): string {
  */
 let requestToken = 0;
 let importToken = 0;
+/** Антигонка анализа паттернов: новый запуск гасит предыдущий. */
+let patternToken = 0;
 /**
  * Отдельный счётчик для сравнения. Общий requestToken здесь трогать нельзя:
  * кнопка «Сравнить с…» доступна, пока ещё грузятся байты A, и инкремент
@@ -346,6 +387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   checkError: null,
   checkWarnings: null,
   checkCaptureIds: null,
+  checkFilter: DEFAULT_CHECK_FILTER,
   checkCoverage: null,
   checkCoverageKey: null,
   checkCoverageLoading: false,
@@ -566,6 +608,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   importPhase: "idle",
   importProgress: 0,
   importError: null,
+  patternSuggestion: null,
+  patternLoading: false,
 
   async loadProject() {
     set((state) => ({
@@ -909,6 +953,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       checkCoverageLoading: false,
       checkCoverageError: null,
     });
+  },
+
+  setCheckFilter(patch) {
+    set((state) => ({ checkFilter: { ...state.checkFilter, ...patch } }));
+  },
+
+  resetCheckFilter() {
+    set({ checkFilter: DEFAULT_CHECK_FILTER });
   },
 
   async runCheck() {
@@ -1458,6 +1510,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       }));
 
       await get().selectCapture(capture.id);
+      if (token !== importToken) return;
+      // Автопоиск паттернов: тихо; диалог — только если есть находки.
+      void get().analyzePatterns();
     } catch (error) {
       if (token !== importToken) return;
       set({
@@ -1482,11 +1537,74 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ importPhase: "idle", importError: null });
   },
 
+  async analyzePatterns() {
+    const token = ++patternToken;
+    const { activeCaptureId, messages } = get();
+    if (!activeCaptureId) return false;
+
+    // Достаточно первых сообщений активной сессии — закономерности
+    // повторяются по всему потоку.
+    const ordered = [...messages]
+      .sort((a, b) => a.packetNumber - b.packetNumber)
+      .slice(0, PATTERN_SAMPLE_LIMIT);
+    if (ordered.length === 0) return false;
+
+    set({ patternLoading: true });
+    try {
+      const samples: MessageSample[] = [];
+      // Пачками по 8: байты независимы, но поток запросов ограничен.
+      for (let index = 0; index < ordered.length; index += 8) {
+        const chunk = ordered.slice(index, index + 8);
+        const loaded = await Promise.all(
+          chunk.map((item) =>
+            appService
+              .getBytes(activeCaptureId, item.byteOffset, item.length)
+              .catch(() => null),
+          ),
+        );
+        if (token !== patternToken) return false;
+        for (const bytes of loaded) {
+          if (bytes) samples.push({ bytes });
+        }
+      }
+
+      const capture = get().captures.find((item) => item.id === activeCaptureId);
+      const suggestion = analyzeCapture(samples, capture?.fileName ?? null);
+      if (token !== patternToken) return false;
+
+      const hasFindings = suggestion.findings.length > 0;
+      set({
+        patternLoading: false,
+        patternSuggestion: hasFindings ? suggestion : null,
+      });
+      return hasFindings;
+    } catch {
+      if (token === patternToken) set({ patternLoading: false });
+      return false;
+    }
+  },
+
+  async acceptPatternSuggestion() {
+    const suggestion = get().patternSuggestion;
+    if (!suggestion?.model) return;
+    const model = suggestion.model;
+    set({ patternSuggestion: null });
+    await get().saveModel(model);
+    get().setActiveModel(model.id);
+  },
+
+  dismissPatternSuggestion() {
+    // Гасит и идущий анализ: отклонённое предложение не должно вернуться.
+    patternToken += 1;
+    set({ patternSuggestion: null, patternLoading: false });
+  },
+
   resetProject() {
     requestToken += 1;
     checkToken += 1;
     coverageToken += 1;
     applyToken += 1;
+    patternToken += 1;
     staleCandidateRuleIds.clear();
     staleCandidateRuleNames.clear();
     set({
@@ -1517,6 +1635,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       checkError: null,
       checkWarnings: null,
       checkCaptureIds: null,
+      checkFilter: DEFAULT_CHECK_FILTER,
       checkCoverage: null,
       checkCoverageKey: null,
       checkCoverageLoading: false,
@@ -1535,6 +1654,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       importPhase: "idle",
       importProgress: 0,
       importError: null,
+      patternSuggestion: null,
+      patternLoading: false,
     });
   },
 }));

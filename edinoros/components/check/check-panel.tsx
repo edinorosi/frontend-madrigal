@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Check,
   CircleDashed,
   CircleHelp,
   FileSearch,
-  Filter,
   ListChecks,
   RefreshCw,
   X,
@@ -24,6 +23,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { captureTitle } from "@/src/lib/format";
 import {
@@ -31,7 +38,8 @@ import {
   MODEL_STATUS_TONE,
 } from "@/src/lib/model-status";
 import { useAppStore } from "@/src/store/app";
-import type { CheckResult, CheckRow } from "@/src/types/domain";
+import type { CheckFilter } from "@/src/store/app";
+import type { CheckResult, CheckRow, CheckStatus } from "@/src/types/domain";
 
 const ROW_HEIGHT = 34;
 
@@ -87,48 +95,79 @@ function CheckStatusIcon({ row }: { row: CheckRow }) {
   );
 }
 
-/** Сводка: «✓ 9 · ◌ 1 · ? 1 · ✗ 1». */
-function SummaryChips({ result }: { result: CheckResult }) {
+/** Сводка: «✓ 9 · ◌ 1 · ? 1 · ✗ 1». Клик по значку — фильтр по статусу. */
+function SummaryChips({
+  result,
+  activeStatus,
+  onSelect,
+}: {
+  result: CheckResult;
+  activeStatus: CheckFilter["status"];
+  onSelect: (status: CheckFilter["status"]) => void;
+}) {
   const { summary } = result;
+
+  const chips: {
+    key: CheckStatus;
+    Icon: typeof Check;
+    tone: string;
+    title: string;
+    count: number;
+  }[] = [
+    {
+      key: "ok",
+      Icon: Check,
+      tone: "text-ok",
+      title: "Значение совпало с ожидаемым",
+      count: summary.ok,
+    },
+    {
+      key: "partial",
+      Icon: CircleDashed,
+      tone: "text-warn",
+      title: "Значение не извлечено, но кадр разобран",
+      count: summary.partial,
+    },
+    {
+      key: "unknown",
+      Icon: CircleHelp,
+      tone: "text-muted-foreground",
+      title: "Не удалось проверить",
+      count: summary.unknown,
+    },
+    {
+      key: "error",
+      Icon: X,
+      tone: "text-destructive",
+      title: "Значение не совпало с ожидаемым",
+      count: summary.error,
+    },
+  ];
 
   return (
     <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-      <span
-        role="img"
-        className="flex items-center gap-0.5 text-ok"
-        title="Значение совпало с ожидаемым"
-        aria-label={`Совпало: ${summary.ok}`}
-      >
-        <Check className="size-3" aria-hidden="true" />
-        {summary.ok}
-      </span>
-      <span
-        role="img"
-        className="flex items-center gap-0.5 text-warn"
-        title="Значение не извлечено, но кадр разобран"
-        aria-label={`Не извлечено: ${summary.partial}`}
-      >
-        <CircleDashed className="size-3" aria-hidden="true" />
-        {summary.partial}
-      </span>
-      <span
-        role="img"
-        className="flex items-center gap-0.5 text-muted-foreground"
-        title="Не удалось проверить"
-        aria-label={`Не проверено: ${summary.unknown}`}
-      >
-        <CircleHelp className="size-3" aria-hidden="true" />
-        {summary.unknown}
-      </span>
-      <span
-        role="img"
-        className="flex items-center gap-0.5 text-destructive"
-        title="Значение не совпало с ожидаемым"
-        aria-label={`Расхождение: ${summary.error}`}
-      >
-        <X className="size-3" aria-hidden="true" />
-        {summary.error}
-      </span>
+      {chips.map(({ key, Icon, tone, title, count }) => {
+        const active = activeStatus === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            title={`${title} (фильтр)`}
+            aria-pressed={active}
+            aria-label={`${title}: ${count}`}
+            onClick={() => onSelect(active ? "all" : key)}
+            className={cn(
+              "flex items-center gap-0.5 rounded px-0.5 outline-none",
+              "focus-visible:ring-1 focus-visible:ring-ring",
+              active && "bg-muted ring-1 ring-ring",
+              tone,
+            )}
+          >
+            <Icon className="size-3" aria-hidden="true" />
+            {count}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -334,6 +373,11 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
   const activeModelId = useAppStore((state) => state.activeModelId);
   const checkCaptureIds = useAppStore((state) => state.checkCaptureIds);
   const capturesLength = useAppStore((state) => state.captures.length);
+  const checkFilter = useAppStore((state) => state.checkFilter);
+  const setCheckFilter = useAppStore((state) => state.setCheckFilter);
+  const resetCheckFilter = useAppStore((state) => state.resetCheckFilter);
+  const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
+  const overlayOpen = useAppStore((state) => state.overlayOpen);
 
   const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
 
@@ -347,9 +391,6 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
     // Зависимости намеренно по значениям, а не по ссылке экшена.
   }, [coverage, coverageLoading, coverageError, checkCaptureIds, activeModelId, capturesLength, loadCheckCoverage]);
 
-  // Фильтр «Расхождения» (R4.1): только строки со статусом error.
-  const [onlyErrors, setOnlyErrors] = useState(false);
-
   // Esc закрывает панель, если каскадом не занят HEX (его Esc-порядок выше).
   useEffect(() => {
     if (escapeDelegated) return;
@@ -358,17 +399,31 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
       if (event.key !== "Escape") return;
       // Esc из поля ввода завершает ввод, а не закрывает панель.
       if (isTypingTarget(event.target)) return;
+      // Открытое меню (записи, статус) забирает Esc себе.
+      if (overlayOpen) return;
       closeCheck();
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [escapeDelegated, closeCheck]);
+  }, [escapeDelegated, closeCheck, overlayOpen]);
 
   const rows = result?.rows ?? [];
-  const filteredRows = onlyErrors
-    ? rows.filter((row) => row.status === "error")
-    : rows;
+  // Фильтры живут в сторе: панель сворачивается — фильтры не теряются.
+  const { query: filterQuery, status: filterStatus } = checkFilter;
+  const filteredRows = useMemo(() => {
+    const needle = filterQuery.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (filterStatus !== "all" && row.status !== filterStatus) return false;
+      if (needle) {
+        const haystack =
+          `${row.action} ${row.time} ${row.expected ?? ""} ${row.extracted}`.toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
+      return true;
+    });
+  }, [rows, filterQuery, filterStatus]);
+  const filterActive = filterStatus !== "all" || filterQuery.trim() !== "";
   const errorCount = result?.summary.error ?? 0;
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -413,21 +468,51 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
         />
         {result ? (
           <>
+            <Input
+              value={filterQuery}
+              onChange={(event) => setCheckFilter({ query: event.target.value })}
+              placeholder="Поиск: действие, время"
+              aria-label="Поиск по таблице проверок"
+              className="h-6 w-40 text-[11px]"
+            />
+            <Select
+              value={filterStatus}
+              onValueChange={(value) =>
+                setCheckFilter({ status: value as CheckFilter["status"] })
+              }
+              onOpenChange={setOverlayOpen}
+            >
+              <SelectTrigger
+                size="sm"
+                className="h-6 w-40 text-[11px]"
+                aria-label="Фильтр по статусу"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  Все статусы ({result.summary.total})
+                </SelectItem>
+                <SelectItem value="ok">Совпало ({result.summary.ok})</SelectItem>
+                <SelectItem value="partial">
+                  Не извлечено ({result.summary.partial})
+                </SelectItem>
+                <SelectItem value="unknown">
+                  Не проверено ({result.summary.unknown})
+                </SelectItem>
+                <SelectItem value="error">
+                  Расхождения ({errorCount})
+                </SelectItem>
+              </SelectContent>
+            </Select>
             <span className="shrink-0 text-[11px] text-muted-foreground">
               Всего: <span className="font-mono">{result.summary.total}</span>
             </span>
-            <SummaryChips result={result} />
-            {rows.length > 0 ? (
-              <Button
-                size="sm"
-                variant={onlyErrors ? "secondary" : "ghost"}
-                className="h-6 gap-1 px-2 text-[11px]"
-                onClick={() => setOnlyErrors((value) => !value)}
-              >
-                <Filter className="size-3" />
-                Расхождения: {errorCount}
-              </Button>
-            ) : null}
+            <SummaryChips
+              result={result}
+              activeStatus={filterStatus}
+              onSelect={(status) => setCheckFilter({ status })}
+            />
           </>
         ) : null}
         {(result || error) && !loading ? (
@@ -452,6 +537,24 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
           </Button>
         ) : null}
       </header>
+
+      {/* Счётчик активного фильтра (как в списке сообщений). */}
+      {result && filterActive ? (
+        <div className="flex shrink-0 items-center justify-between border-t px-2 py-1 text-[10px] text-muted-foreground">
+          <span>
+            Показано{" "}
+            <span className="font-mono">{filteredRows.length}</span> из{" "}
+            <span className="font-mono">{rows.length}</span>
+          </span>
+          <button
+            type="button"
+            className="rounded px-1 underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={resetCheckFilter}
+          >
+            Сбросить фильтр
+          </button>
+        </div>
+      ) : null}
 
       {/* Агрегация (R4.2): сбой одной записи — предупреждение, не пустой итог. */}
       {warnings && warnings.length > 0 ? (
@@ -494,9 +597,14 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
             Нет действий в журнале
           </p>
         ) : filteredRows.length === 0 ? (
-          <p className="pt-2 text-[11px] text-muted-foreground">
-            Расхождений нет
-          </p>
+          <div className="flex flex-col items-start gap-1.5 pt-2">
+            <p className="text-[11px] text-muted-foreground">
+              Нет строк по фильтру
+            </p>
+            <Button size="sm" variant="outline" onClick={resetCheckFilter}>
+              Сбросить фильтр
+            </Button>
+          </div>
         ) : (
           <div className="flex h-full flex-col gap-1">
             <div className="flex shrink-0 items-center gap-2 border-b px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

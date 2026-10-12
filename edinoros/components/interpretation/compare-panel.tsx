@@ -3,10 +3,12 @@
 import { useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
+import { CompareFields } from "@/components/interpretation/compare-fields";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { computeDiff, type DiffTail } from "@/src/lib/diff";
 import { formatBytes } from "@/src/lib/format";
+import { applyModelCached } from "@/src/lib/parse";
 import { useAppStore } from "@/src/store/app";
 import type { Message } from "@/src/types/domain";
 
@@ -81,6 +83,29 @@ export function ComparePanel() {
   const messageA = messages.find((item) => item.id === activeMessageId) ?? null;
   const messageB =
     messages.find((item) => item.id === compareMessageId) ?? null;
+
+  // Поля A и B считаются тем же источником, что и в интерпретации:
+  // JSON — готовые, «Модель» — из байтов, которые уже загружены.
+  const fieldsSource = useAppStore((state) => state.fieldsSource);
+  const models = useAppStore((state) => state.models);
+  const activeModelId = useAppStore((state) => state.activeModelId);
+  const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
+
+  const fieldsA = useMemo(() => {
+    if (!messageA) return [];
+    if (fieldsSource === "model" && bytesA && activeModel) {
+      return applyModelCached(messageA.id, bytesA, activeModel).fields;
+    }
+    return messageA.fields;
+  }, [messageA, fieldsSource, bytesA, activeModel]);
+
+  const fieldsB = useMemo(() => {
+    if (!messageB) return [];
+    if (fieldsSource === "model" && compareBytes && activeModel) {
+      return applyModelCached(messageB.id, compareBytes, activeModel).fields;
+    }
+    return messageB.fields;
+  }, [messageB, fieldsSource, compareBytes, activeModel]);
 
   const diff = useMemo(() => {
     if (!bytesA || !compareBytes) return null;
@@ -218,6 +243,15 @@ export function ComparePanel() {
           ) : null}
         </>
       )}
+
+      {/* Поля двух сообщений: слияние по имени, расхождения помечены. */}
+      {!compareLoading ? (
+        <CompareFields
+          fieldsA={fieldsA}
+          fieldsB={fieldsB}
+          onSelectRangeA={(offset, length) => setSelection({ offset, length })}
+        />
+      ) : null}
 
       <Button
         size="sm"

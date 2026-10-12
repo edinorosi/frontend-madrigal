@@ -663,7 +663,7 @@ export function InterpretationPanel({
             </Badge>
           </div>
 
-          <section className="flex flex-col gap-1.5">
+          <section className="flex flex-col gap-1">
             <div className="flex items-center gap-1.5">
               <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                 Поля
@@ -672,13 +672,15 @@ export function InterpretationPanel({
                 <Badge
                   variant="outline"
                   className={cn(
-                    "px-1.5 text-[10px] font-normal",
+                    "min-w-0 max-w-40 truncate px-1.5 text-[10px] font-normal",
                     MODEL_STATUS_TONE[messageModel.status],
                   )}
-                  title={`Модель: ${messageModel.name}`}
+                  title={`${messageModel.name} · ${MODEL_STATUS_LABEL[messageModel.status]} · ${displayedFields.length} пол.`}
                 >
-                  {messageModel.name} · {MODEL_STATUS_LABEL[messageModel.status]} ·{" "}
-                  {displayedFields.length} пол.
+                  <span className="truncate">
+                    {messageModel.name} · {MODEL_STATUS_LABEL[messageModel.status]} ·{" "}
+                    {displayedFields.length} пол.
+                  </span>
                 </Badge>
               ) : null}
               {fieldsSource === "model" && modelApply && modelApply.status !== "parsed" ? (
@@ -691,11 +693,6 @@ export function InterpretationPanel({
                 >
                   {modelApply.status === "partial" ? "частично" : "не разобрано"}
                 </Badge>
-              ) : null}
-              {fieldsSource === "model" && modelApply?.ruleName ? (
-                <span className="text-[10px] text-muted-foreground">
-                  правило: {modelApply.ruleName}
-                </span>
               ) : null}
               <div className="ml-auto flex items-center gap-1">
                 <Select
@@ -712,6 +709,14 @@ export function InterpretationPanel({
                     size="sm"
                     className="h-6 w-[136px] text-[10px]"
                     aria-label="Модель сообщения"
+                    title={
+                      message.modelId === null || message.modelId === undefined
+                        ? activeModel
+                          ? `Как у проекта (${activeModel.name})`
+                          : "Как у проекта"
+                        : (models?.find((item) => item.id === message.modelId)
+                            ?.name ?? "Модель сообщения")
+                    }
                   >
                     <SelectValue />
                   </SelectTrigger>
@@ -748,6 +753,14 @@ export function InterpretationPanel({
                 </Select>
               </div>
             </div>
+            {fieldsSource === "model" && modelApply?.ruleName ? (
+              <span
+                className="truncate text-[10px] text-muted-foreground"
+                title={`правило: ${modelApply.ruleName}`}
+              >
+                правило: {modelApply.ruleName}
+              </span>
+            ) : null}
 
             {fieldsSource === "model" && !messageModel ? (
               <p className="text-xs text-muted-foreground">

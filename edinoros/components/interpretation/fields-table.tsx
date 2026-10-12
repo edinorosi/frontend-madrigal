@@ -37,9 +37,9 @@ const MARK_TONE: Record<FieldMark, string> = {
 };
 
 const ROW_TONE: Partial<Record<FieldMark, string>> = {
-  changed: "bg-diff/25",
-  added: "bg-ok/10",
-  removed: "bg-destructive/5",
+  changed: "bg-diff/10",
+  added: "bg-ok/8",
+  removed: "bg-destructive/8",
 };
 
 /**
@@ -83,6 +83,35 @@ export function countFieldChanges(rows: FieldRow[]): number {
 }
 
 /**
+ * Тултип глифа: номер пакета предыдущего сообщения + что изменилось.
+ * У кликабельных глифов добавляется приглашение к сравнению.
+ */
+function markTitle(
+  mark: FieldMark,
+  prevPacketNumber: number | null,
+  prevValue: string | null,
+  currentValue: string,
+): string {
+  if (mark === "none" || prevPacketNumber === null) {
+    return "Предыдущее сообщение не найдено — это первое в потоке";
+  }
+  const pack = `пакета №${prevPacketNumber}`;
+  let text: string;
+  if (mark === "same") {
+    text = `Без изменений относительно ${pack}`;
+  } else if (mark === "changed") {
+    text = `Значение изменилось относительно ${pack}: было ${prevValue ?? "?"}, стало ${currentValue}`;
+  } else if (mark === "added") {
+    text = `Новое поле — отсутствовало в ${pack}`;
+  } else {
+    text = `Поле исчезло — было в ${pack} (значение ${prevValue ?? "?"}), отсутствует в текущем`;
+  }
+  return mark === "changed" || mark === "added" || mark === "removed"
+    ? `${text}. Клик — сравнение с предыдущим`
+    : text;
+}
+
+/**
  * Таблица полей сообщения: имя, тип, значение, дельта к предыдущему
  * сообщению и адрес байтов. Клик по адресу — переход к байтам в HEX,
  * наведение строки — подсветка поля в дампе (как у прежних карточек).
@@ -94,6 +123,8 @@ export function FieldsTable({
   onHoverField,
   onSelectRange,
   ruleName,
+  prevPacketNumber,
+  onComparePrev,
 }: {
   rows: FieldRow[];
   packetNumber: number;
@@ -102,6 +133,10 @@ export function FieldsTable({
   onSelectRange: (offset: number, length: number) => void;
   /** Имя активного правила модели — тултип строки с ruleId. */
   ruleName?: string | null;
+  /** Номер пакета предыдущего сообщения — для тултипов дельты. */
+  prevPacketNumber: number | null;
+  /** Клик по глифу Δ/+/−: открыть сравнение с предыдущим; null — недоступно. */
+  onComparePrev: (() => void) | null;
 }) {
   const changed = useMemo(() => countFieldChanges(rows), [rows]);
 
@@ -122,6 +157,25 @@ export function FieldsTable({
           const { field, mark, prevValue } = row;
           const removed = mark === "removed";
           const hovered = !removed && hoveredFieldId === field.id;
+          const clickable =
+            onComparePrev !== null &&
+            (mark === "changed" || mark === "added" || removed);
+          const glyphTitle = markTitle(
+            mark,
+            prevPacketNumber,
+            prevValue,
+            field.value,
+          );
+          const glyphAria =
+            mark === "changed"
+              ? "Значение изменилось"
+              : mark === "added"
+                ? "Новое поле"
+                : removed
+                  ? "Поле исчезло"
+                  : mark === "same"
+                    ? "Без изменений"
+                    : undefined;
 
           const title = [
             removed
@@ -150,30 +204,32 @@ export function FieldsTable({
                 removed && "opacity-60",
               )}
             >
-              <span
-                className={cn(
-                  "w-4 shrink-0 text-center font-mono text-[10px]",
-                  MARK_TONE[mark],
-                )}
-                title={
-                  mark === "none"
-                    ? "Предыдущего сообщения нет"
-                    : "Δ к предыдущему сообщению"
-                }
-                aria-label={
-                  mark === "changed"
-                    ? "Значение изменилось"
-                    : mark === "added"
-                      ? "Новое поле"
-                      : mark === "removed"
-                        ? "Поле исчезло"
-                        : mark === "same"
-                          ? "Без изменений"
-                          : undefined
-                }
-              >
-                {MARK_GLYPH[mark]}
-              </span>
+              {clickable ? (
+                <button
+                  type="button"
+                  title={glyphTitle}
+                  aria-label={glyphAria}
+                  onClick={() => onComparePrev()}
+                  className={cn(
+                    "w-4 shrink-0 cursor-pointer rounded text-center font-mono text-[10px] outline-none",
+                    "hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring",
+                    MARK_TONE[mark],
+                  )}
+                >
+                  {MARK_GLYPH[mark]}
+                </button>
+              ) : (
+                <span
+                  className={cn(
+                    "w-4 shrink-0 text-center font-mono text-[10px]",
+                    MARK_TONE[mark],
+                  )}
+                  title={glyphTitle}
+                  aria-label={glyphAria}
+                >
+                  {MARK_GLYPH[mark]}
+                </span>
+              )}
               <span className="min-w-0 flex-1 truncate font-mono text-xs">
                 {field.name}
               </span>

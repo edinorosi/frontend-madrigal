@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
+  ArrowRight,
   ArrowUp,
   Check,
   Copy,
@@ -47,6 +48,7 @@ import {
 import { useAppStore } from "@/src/store/app";
 import type { Model, ModelRule, ModelStatus } from "@/src/types/domain";
 import { RuleForm } from "@/components/model/rule-form";
+import { CompareModelsDialog } from "@/components/model/compare-models-dialog";
 
 function formatOpcode(value: number): string {
   return `0x${value.toString(16).toUpperCase().padStart(2, "0")}`;
@@ -146,6 +148,7 @@ export function ModelEditor() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingModelId, setRenamingModelId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
+  const [compareOpen, setCompareOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const activeModel = useMemo(
@@ -590,6 +593,17 @@ export function ModelEditor() {
               model={activeModel}
               onChange={(status) => void handleChangeStatus(status)}
             />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 px-2"
+              disabled={(models?.length ?? 0) < 2}
+              title="Сравнить текущую модель с другой"
+              onClick={() => setCompareOpen(true)}
+            >
+              <ArrowRight className="size-3.5" />
+              Сравнить с…
+            </Button>
           </>
         ) : null}
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
@@ -936,6 +950,14 @@ export function ModelEditor() {
         onConfirm={() => void confirmPendingDelete()}
         onCancel={() => setPendingDelete(null)}
       />
+
+      {activeModel ? (
+        <CompareModelsDialog
+          open={compareOpen}
+          onClose={() => setCompareOpen(false)}
+          modelA={activeModel}
+        />
+      ) : null}
     </div>
   );
 }

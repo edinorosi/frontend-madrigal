@@ -13,6 +13,8 @@ export function Statusbar() {
   const gotoOffset = useAppStore((state) => state.gotoOffset);
   const setMessageFilter = useAppStore((state) => state.setMessageFilter);
   const setSidebarTab = useAppStore((state) => state.setSidebarTab);
+  // В редакторе модели переход к смещению бессмыслен — прячем поле.
+  const modelEditorOpen = useAppStore((state) => state.modelEditorOpen);
 
   const [offsetText, setOffsetText] = useState("");
   const [offsetError, setOffsetError] = useState(false);
@@ -78,34 +80,38 @@ export function Statusbar() {
         </span>
       </button>
 
-      <span className="text-border">·</span>
+      {modelEditorOpen ? null : (
+        <>
+          <span className="text-border">·</span>
 
-      <form className="flex shrink-0 items-center gap-1.5" onSubmit={handleGoto}>
-        <label htmlFor="goto-offset" className="opacity-70">
-          Смещение
-        </label>
-        <input
-          id="goto-offset"
-          type="text"
-          inputMode="text"
-          value={offsetText}
-          disabled={activeMessageId === null}
-          placeholder="0x…"
-          aria-label="Перейти к смещению в сообщении"
-          className={
-            "w-20 rounded border bg-transparent px-1.5 py-0 font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 " +
-            (offsetError ? "border-destructive text-destructive" : "border-border")
-          }
-          onChange={(event) => setOffsetText(event.target.value)}
-          onKeyDown={(event) => {
-            // Esc здесь очищает поле; остальные обработчики пропускают Esc
-            // из поля ввода (isTypingTarget), так что панели не закроются.
-            if (event.key === "Escape") {
-              setOffsetText("");
-            }
-          }}
-        />
-      </form>
+          <form className="flex shrink-0 items-center gap-1.5" onSubmit={handleGoto}>
+            <label htmlFor="goto-offset" className="opacity-70">
+              Смещение
+            </label>
+            <input
+              id="goto-offset"
+              type="text"
+              inputMode="text"
+              value={offsetText}
+              disabled={activeMessageId === null}
+              placeholder="0x…"
+              aria-label="Перейти к смещению в сообщении"
+              className={
+                "w-20 rounded border bg-transparent px-1.5 py-0 font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 " +
+                (offsetError ? "border-destructive text-destructive" : "border-border")
+              }
+              onChange={(event) => setOffsetText(event.target.value)}
+              onKeyDown={(event) => {
+                // Esc здесь очищает поле; остальные обработчики пропускают Esc
+                // из поля ввода (isTypingTarget), так что панели не закроются.
+                if (event.key === "Escape") {
+                  setOffsetText("");
+                }
+              }}
+            />
+          </form>
+        </>
+      )}
 
       <span className="text-border">·</span>
 

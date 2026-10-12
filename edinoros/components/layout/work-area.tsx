@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { computeDiff, maskToRanges } from "@/src/lib/diff";
 import { formatBytes, formatClock, formatTuple } from "@/src/lib/format";
+import { resolveMessageModel } from "@/src/lib/message-model";
 import { applyModelCached } from "@/src/lib/parse";
 import { useAppStore } from "@/src/store/app";
 import type { Direction, ParseStatus } from "@/src/types/domain";
@@ -166,7 +167,14 @@ export function WorkArea() {
   const fieldsSource = useAppStore((state) => state.fieldsSource);
   const models = useAppStore((state) => state.models);
   const activeModelId = useAppStore((state) => state.activeModelId);
-  const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
+  /**
+   * Модель сообщения (R10.1): своя привязка или активная модель проекта.
+   * Подсветка HEX и непокрытые байты считаются именно ей.
+   */
+  const messageModel = useMemo(
+    () => resolveMessageModel(message, models, activeModelId),
+    [message, models, activeModelId],
+  );
 
   /**
    * Подсветка поля в HEX: при fieldsSource=model поля считаются на лету
@@ -176,25 +184,25 @@ export function WorkArea() {
     if (!message) return null;
 
     if (fieldsSource === "model") {
-      if (!bytes || !activeModel) return null;
-      const apply = applyModelCached(message.id, bytes, activeModel);
+      if (!bytes || !messageModel) return null;
+      const apply = applyModelCached(message.id, bytes, messageModel);
       return apply.fields.find((field) => field.id === hoveredFieldId) ?? null;
     }
 
     return message.fields.find((field) => field.id === hoveredFieldId) ?? null;
-  }, [message, fieldsSource, bytes, activeModel, hoveredFieldId]);
+  }, [message, fieldsSource, bytes, messageModel, hoveredFieldId]);
 
   /**
    * Непокрытые моделью байты (R9.1): серый слой в HEX при fieldsSource=model.
    * В JSON-режиме и при сравнении слой не показывается.
    */
   const uncoveredRanges = useMemo(() => {
-    if (compareActive || fieldsSource !== "model" || !message || !bytes || !activeModel) {
+    if (compareActive || fieldsSource !== "model" || !message || !bytes || !messageModel) {
       return null;
     }
-    const apply = applyModelCached(message.id, bytes, activeModel);
+    const apply = applyModelCached(message.id, bytes, messageModel);
     return apply.uncovered.length > 0 ? apply.uncovered : null;
-  }, [compareActive, fieldsSource, message, bytes, activeModel]);
+  }, [compareActive, fieldsSource, message, bytes, messageModel]);
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">

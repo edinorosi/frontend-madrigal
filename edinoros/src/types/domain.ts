@@ -81,6 +81,12 @@ export interface Message {
   timestamp: string;
   interpretation: InterpretationStatus;
   verified: boolean;
+  /**
+   * Модель разбора сообщения (R10.1). Необязательна: отсутствие — сообщение
+   * разбирается активной моделью проекта. Согласовано с бэком: бэк хранит
+   * и возвращает поле как есть.
+   */
+  modelId?: string;
   /** Поля разбора. Пустой массив, если сообщение не разобрано. */
   fields: MessageField[];
 }

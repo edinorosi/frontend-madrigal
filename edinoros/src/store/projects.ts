@@ -30,7 +30,9 @@ import {
   type ProjectMeta,
   type ProjectRecord,
 } from "@/src/lib/projects";
+import { appService } from "@/src/services";
 import { useAppStore } from "@/src/store/app";
+import type { Observation } from "@/src/types/domain";
 
 /** Какой экран показывает приложение. */
 export type AppView = "projects" | "workspace";
@@ -44,6 +46,8 @@ interface ProjectsState {
   projects: ProjectMeta[];
   /** Идёт операция с проектом — кнопки недоступны. */
   busy: boolean;
+  /** Идёт автосохранение снимка при выходе — «Сохранение…» в топбаре. */
+  saving: boolean;
   /** Ошибка операции — баннер на стартовой странице. */
   error: string | null;
 
@@ -107,11 +111,63 @@ function persistRecord(
 const STORAGE_ERROR =
   "Не удалось сохранить проект: хранилище браузера недоступно или переполнено";
 
+/** Пул обхода сообщений при автосохранении — мок с задержкой не должен растянуть выход из проекта. */
+const SAVE_POOL = 16;
+
+/**
+ * Лёгкий снимок для автосохранения: наблюдения по всем сообщениям записи.
+ * В отличие от collectExportData (экспорт отчёта) байты не читаются:
+ * конверту проекта (R6.4) не нужны ни байты, ни опкоды, ни покрытие —
+ * только модели, наблюдения, настройки и последняя проверка.
+ */
+async function collectSaveSnapshot(captureId: string | null): Promise<{
+  observations: Observation[];
+  sessionsCount: number;
+  messagesCount: number;
+}> {
+  if (!captureId) {
+    return { observations: [], sessionsCount: 0, messagesCount: 0 };
+  }
+
+  const sessions = await appService.listSessions(captureId);
+  const lists = await Promise.all(
+    sessions.map((session) => appService.listMessages(session.id)),
+  );
+  const messages = lists.flat();
+
+  const observations: Observation[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < messages.length) {
+      const index = next;
+      next += 1;
+      try {
+        const list = await appService.listObservations(messages[index].id);
+        observations.push(...list);
+      } catch {
+        // Наблюдения одного сообщения не должны ронять сохранение.
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(SAVE_POOL, Math.max(messages.length, 1)) }, () =>
+      worker(),
+    ),
+  );
+
+  return {
+    observations,
+    sessionsCount: sessions.length,
+    messagesCount: messages.length,
+  };
+}
+
 export const useProjectsStore = create<ProjectsState>((set, get) => ({
   view: "projects",
   activeProjectId: null,
   projects: [],
   busy: false,
+  saving: false,
   error: null,
 
   loadProjects() {
@@ -337,7 +393,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
   },
 
   async backToProjects() {
-    if (get().busy) return;
+    if (get().busy || get().saving) return;
 
     const id = get().activeProjectId;
     if (id === null) {
@@ -345,21 +401,42 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       return;
     }
 
-    set({ busy: true, error: null });
+    set({ saving: true, error: null });
     let saveError: string | null = null;
 
     try {
-      // Полный снимок тем же путём, что экспорт проекта (R6.4):
-      // модели, наблюдения, настройки, последняя проверка.
-      const data = await useAppStore.getState().collectExportData();
+      // Лёгкий снимок тем же форматом, что экспорт проекта (R6.4):
+      // модели, наблюдения, настройки, последняя проверка — без байтов.
       const state = useAppStore.getState();
+      const capture =
+        state.captures.find((item) => item.id === state.activeCaptureId) ??
+        null;
+      const model =
+        state.models?.find((item) => item.id === state.activeModelId) ?? null;
+      const { observations, sessionsCount, messagesCount } =
+        await collectSaveSnapshot(state.activeCaptureId);
 
-      const snapshot = buildProjectExport(data, {
-        modelId: state.activeModelId,
-        sessionId: state.activeSessionId,
-        messageId: state.activeMessageId,
-        fieldsSource: state.fieldsSource,
-      });
+      const snapshot = buildProjectExport(
+        {
+          generatedAt: new Date().toISOString(),
+          capture,
+          model,
+          models: state.models ?? [],
+          sessionsCount,
+          messages: [],
+          applyByMessage: null,
+          opcodes: null,
+          observations,
+          checkResult: state.checkResult,
+        },
+        {
+          modelId: state.activeModelId,
+          sessionId: state.activeSessionId,
+          messageId: state.activeMessageId,
+          fieldsSource: state.fieldsSource,
+          messageModels: state.messageModels,
+        },
+      );
 
       const previous = readRecord(id);
       const now = new Date().toISOString();
@@ -379,10 +456,10 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
         ...base,
         updatedAt: now,
         meta: {
-          fileName: data.capture?.fileName ?? base.meta.fileName,
-          sizeBytes: data.capture?.sizeBytes ?? base.meta.sizeBytes,
-          sessionCount: data.sessionsCount,
-          messageCount: data.messages.length,
+          fileName: capture?.fileName ?? base.meta.fileName,
+          sizeBytes: capture?.sizeBytes ?? base.meta.sizeBytes,
+          sessionCount: sessionsCount,
+          messageCount: messagesCount,
         },
       };
 
@@ -398,6 +475,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       // Уходить из проекта можно и с ошибкой сохранения: иначе пользователь
       // заперт в рабочей зоне. Причина показывается баннером на списке.
       set({
+        saving: false,
         busy: false,
         view: "projects",
         activeProjectId: null,

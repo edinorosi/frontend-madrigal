@@ -24,13 +24,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { captureTitle } from "@/src/lib/format";
 import {
@@ -157,7 +150,7 @@ function SummaryChips({
             aria-label={`${title}: ${count}`}
             onClick={() => onSelect(active ? "all" : key)}
             className={cn(
-              "flex items-center gap-0.5 rounded px-0.5 outline-none",
+              "flex h-7 items-center gap-0.5 rounded px-1.5 outline-none",
               "focus-visible:ring-1 focus-visible:ring-ring",
               active && "bg-muted ring-1 ring-ring",
               tone,
@@ -309,7 +302,7 @@ function CaptureSelect() {
         <Button
           size="sm"
           variant="outline"
-          className="h-6 gap-1 px-2 text-[11px]"
+          className="h-7 gap-1 px-2 text-[11px]"
         >
           <ListChecks className="size-3" />
           {label}
@@ -375,8 +368,6 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
   const capturesLength = useAppStore((state) => state.captures.length);
   const checkFilter = useAppStore((state) => state.checkFilter);
   const setCheckFilter = useAppStore((state) => state.setCheckFilter);
-  const resetCheckFilter = useAppStore((state) => state.resetCheckFilter);
-  const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
   const overlayOpen = useAppStore((state) => state.overlayOpen);
 
   const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
@@ -422,9 +413,7 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
       }
       return true;
     });
-  }, [rows, filterQuery, filterStatus]);
-  const filterActive = filterStatus !== "all" || filterQuery.trim() !== "";
-  const errorCount = result?.summary.error ?? 0;
+  },     [rows, filterQuery, filterStatus]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: filteredRows.length,
@@ -435,126 +424,89 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
 
   return (
     <section className="flex shrink-0 flex-col border-t bg-background">
-      <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-2 py-2">
-        <h2 className="shrink-0 text-sm font-medium">Проверка</h2>
-        {/* Записи проверки (R4.2): мультивыбор, по умолчанию все. */}
-        <CaptureSelect />
-        {/* Модель (R3-г): имя и статус; обновляется при смене активной модели. */}
-        <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
-          Модель:{" "}
-          {activeModel ? (
-            <>
-              <span className="font-mono">{activeModel.name}</span>
-              <Badge
-                variant="outline"
-                className={cn(
-                  "px-1 text-[10px] font-normal",
-                  MODEL_STATUS_TONE[activeModel.status],
-                )}
-              >
-                {MODEL_STATUS_LABEL[activeModel.status]}
-              </Badge>
-            </>
-          ) : (
-            <span className="font-mono">—</span>
-          )}
-        </span>
-        {/* Покрытие опкодов (R4.2). */}
-        <CoverageBadge
-          coverage={coverage}
-          loading={coverageLoading}
-          error={coverageError}
-          onRetry={() => void loadCheckCoverage()}
-        />
-        {result ? (
-          <>
-            <Input
-              value={filterQuery}
-              onChange={(event) => setCheckFilter({ query: event.target.value })}
-              placeholder="Поиск: действие, время"
-              aria-label="Поиск по таблице проверок"
-              className="h-6 w-40 text-[11px]"
-            />
-            <Select
-              value={filterStatus}
-              onValueChange={(value) =>
-                setCheckFilter({ status: value as CheckFilter["status"] })
-              }
-              onOpenChange={setOverlayOpen}
-            >
-              <SelectTrigger
-                size="sm"
-                className="h-6 w-40 text-[11px]"
-                aria-label="Фильтр по статусу"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  Все статусы ({result.summary.total})
-                </SelectItem>
-                <SelectItem value="ok">Совпало ({result.summary.ok})</SelectItem>
-                <SelectItem value="partial">
-                  Не извлечено ({result.summary.partial})
-                </SelectItem>
-                <SelectItem value="unknown">
-                  Не проверено ({result.summary.unknown})
-                </SelectItem>
-                <SelectItem value="error">
-                  Расхождения ({errorCount})
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <span className="shrink-0 text-[11px] text-muted-foreground">
-              Всего: <span className="font-mono">{result.summary.total}</span>
+      <header className="flex shrink-0 flex-col gap-y-2 px-2 py-2">
+        {/* Строка 1 — контекст проверки и действия. */}
+        <div className="flex items-center justify-between gap-x-2">
+          <div className="flex min-w-0 items-center gap-x-2">
+            <h2 className="shrink-0 text-sm font-medium leading-7">Проверка</h2>
+            {/* Записи проверки (R4.2): мультивыбор, по умолчанию все. */}
+            <CaptureSelect />
+            {/* Модель (R3-г): имя и статус; обновляется при смене модели. */}
+            <span className="flex min-w-0 items-center gap-1 text-[11px] leading-7 text-muted-foreground">
+              Модель:{" "}
+              {activeModel ? (
+                <>
+                  <span className="truncate font-mono">{activeModel.name}</span>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "shrink-0 px-1 text-[10px] font-normal",
+                      MODEL_STATUS_TONE[activeModel.status],
+                    )}
+                  >
+                    {MODEL_STATUS_LABEL[activeModel.status]}
+                  </Badge>
+                </>
+              ) : (
+                <span className="font-mono">—</span>
+              )}
             </span>
-            <SummaryChips
-              result={result}
-              activeStatus={filterStatus}
-              onSelect={(status) => setCheckFilter({ status })}
+            {/* Покрытие опкодов (R4.2). */}
+            <CoverageBadge
+              coverage={coverage}
+              loading={coverageLoading}
+              error={coverageError}
+              onRetry={() => void loadCheckCoverage()}
             />
-          </>
-        ) : null}
-        {(result || error) && !loading ? (
-          <Button
-            size="sm"
-            variant="outline"
-            className="ml-auto h-6 gap-1 px-2 text-[11px]"
-            onClick={() => void runCheck()}
-          >
-            <RefreshCw className="size-3" />
-            Перепроверить
-          </Button>
-        ) : null}
-        {loading ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="ml-auto h-6 gap-1 px-2 text-[11px]"
-            onClick={cancelCheck}
-          >
-            Отменить
-          </Button>
+          </div>
+          {(result || error) && !loading ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 shrink-0 gap-1 px-2 text-[11px]"
+              onClick={() => void runCheck()}
+            >
+              <RefreshCw className="size-3" />
+              Перепроверить
+            </Button>
+          ) : null}
+          {loading ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 shrink-0 gap-1 px-2 text-[11px]"
+              onClick={cancelCheck}
+            >
+              Отменить
+            </Button>
+          ) : null}
+        </div>
+
+        {/* Строка 2 — фильтры и счётчик. Сброс — клик по активному чипу. */}
+        {result ? (
+          <div className="flex items-center justify-between gap-x-2">
+            <div className="flex min-w-0 flex-1 items-center gap-x-2">
+              <Input
+                value={filterQuery}
+                onChange={(event) => setCheckFilter({ query: event.target.value })}
+                placeholder="Поиск: действие, время, значения"
+                aria-label="Поиск по таблице проверок"
+                className="h-7 min-w-0 max-w-64 flex-1 text-[11px]"
+              />
+              <SummaryChips
+                result={result}
+                activeStatus={filterStatus}
+                onSelect={(status) => setCheckFilter({ status })}
+              />
+            </div>
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              Показано{" "}
+              <span className="font-mono">{filteredRows.length}</span> из{" "}
+              <span className="font-mono">{rows.length}</span>
+            </span>
+          </div>
         ) : null}
       </header>
-
-      {/* Счётчик активного фильтра (как в списке сообщений). */}
-      {result && filterActive ? (
-        <div className="flex shrink-0 items-center justify-between border-t px-2 py-1 text-[10px] text-muted-foreground">
-          <span>
-            Показано{" "}
-            <span className="font-mono">{filteredRows.length}</span> из{" "}
-            <span className="font-mono">{rows.length}</span>
-          </span>
-          <button
-            type="button"
-            className="rounded px-1 underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
-            onClick={resetCheckFilter}
-          >
-            Сбросить фильтр
-          </button>
-        </div>
-      ) : null}
 
       {/* Агрегация (R4.2): сбой одной записи — предупреждение, не пустой итог. */}
       {warnings && warnings.length > 0 ? (
@@ -597,14 +549,9 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
             Нет действий в журнале
           </p>
         ) : filteredRows.length === 0 ? (
-          <div className="flex flex-col items-start gap-1.5 pt-2">
-            <p className="text-[11px] text-muted-foreground">
-              Нет строк по фильтру
-            </p>
-            <Button size="sm" variant="outline" onClick={resetCheckFilter}>
-              Сбросить фильтр
-            </Button>
-          </div>
+          <p className="pt-2 text-[11px] text-muted-foreground">
+            Нет строк по фильтру
+          </p>
         ) : (
           <div className="flex h-full flex-col gap-1">
             <div className="flex shrink-0 items-center gap-2 border-b px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

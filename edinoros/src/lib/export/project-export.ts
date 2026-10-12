@@ -37,6 +37,12 @@ export interface ProjectExportFile {
     sessionId: string | null;
     messageId: string | null;
     fieldsSource: "json" | "model";
+    /**
+     * Привязки сообщений к моделям (R10.1): messageId → modelId.
+     * Необязательно: отсутствие — все сообщения разбираются активной
+     * моделью. Расширение schemaVersion 1, обратно совместимо.
+     */
+    messageModels?: Record<string, string>;
   };
   models: Model[];
   observations: Observation[];
@@ -111,6 +117,21 @@ export function parseProjectExport(raw: string): ProjectExportFile {
     throw new Error("в файле нет объекта active");
   }
   const activeSource = activeRaw as Record<string, unknown>;
+  const messageModelsRaw = activeSource.messageModels;
+  const messageModels: Record<string, string> = {};
+  if (
+    typeof messageModelsRaw === "object" &&
+    messageModelsRaw !== null &&
+    !Array.isArray(messageModelsRaw)
+  ) {
+    for (const [key, value] of Object.entries(
+      messageModelsRaw as Record<string, unknown>,
+    )) {
+      if (typeof value === "string" && value.length > 0) {
+        messageModels[key] = value;
+      }
+    }
+  }
   const active: ProjectExportFile["active"] = {
     modelId: typeof activeSource.modelId === "string" ? activeSource.modelId : null,
     sessionId:
@@ -118,6 +139,7 @@ export function parseProjectExport(raw: string): ProjectExportFile {
     messageId:
       typeof activeSource.messageId === "string" ? activeSource.messageId : null,
     fieldsSource: activeSource.fieldsSource === "model" ? "model" : "json",
+    messageModels,
   };
 
   let checkResult: CheckResult | null = null;

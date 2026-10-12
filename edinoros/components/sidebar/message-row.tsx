@@ -3,6 +3,7 @@
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusIcon } from "@/components/status-icon";
+import { useAppStore } from "@/src/store/app";
 import type { Message } from "@/src/types/domain";
 
 /** packetNumber — номер пакета-источника в записи (§ поле Message). */
@@ -34,8 +35,15 @@ export function MessageRow({
   message: Message;
   className?: string;
 }) {
+  const models = useAppStore((state) => state.models);
   const { title, meta } = splitLabel(message.label);
   const isRequest = message.direction === "request";
+  // Своя модель сообщения (R10.1): тонкий значок, только если отличается
+  // от наследуемой. Список тесный — имя показывается в тултипе.
+  const linkedModelName = message.modelId
+    ? (models?.find((item) => item.id === message.modelId)?.name ??
+      message.modelId)
+    : null;
 
   return (
     <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
@@ -49,6 +57,14 @@ export function MessageRow({
       {meta ? (
         <span className="truncate text-[10px] text-muted-foreground">
           {meta}
+        </span>
+      ) : null}
+      {linkedModelName ? (
+        <span
+          title={`Модель: ${linkedModelName}`}
+          className="shrink-0 rounded border border-border/60 px-0.5 text-[9px] text-muted-foreground"
+        >
+          M
         </span>
       ) : null}
       <span className="ml-auto flex shrink-0 items-center gap-1">

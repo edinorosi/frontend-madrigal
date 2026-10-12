@@ -7,6 +7,7 @@
  */
 import { create } from "zustand";
 import { appService } from "@/src/services";
+import { resolveMessageModel } from "@/src/lib/message-model";
 import { applyModelCached, invalidateApplyCache } from "@/src/lib/parse";
 import { resolveObservationStatus } from "@/src/lib/observations";
 import { parseModelExport } from "@/src/lib/export/model-export";
@@ -168,6 +169,15 @@ interface AppState {
   models: Model[] | null;
   /** Активная модель; null — активной нет. */
   activeModelId: string | null;
+  /**
+   * Привязки сообщений к моделям (R10.1): messageId → modelId. Явный выбор
+   * пользователя поверх активной модели проекта; сообщение без записи в
+   * карте разбирается активной моделью. Карта живёт отдельно от сообщений:
+   * список сообщений перезагружается из сервиса при каждой смене сессии.
+   */
+  messageModels: Record<string, string>;
+  /** Назначить модели сообщение; null — вернуться к активной модели проекта. */
+  setMessageModel: (messageId: string, modelId: string | null) => void;
   modelsLoading: boolean;
 
   /**
@@ -405,6 +415,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   models: null,
   activeModelId: null,
+  messageModels: {},
   modelsLoading: false,
 
   modelEditorOpen: false,
@@ -721,8 +732,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
 
     try {
-      const messages = await appService.listMessages(sessionId);
+      const loaded = await appService.listMessages(sessionId);
       if (token !== requestToken) return;
+
+      // Привязки сообщений к моделям (R10.1): локальная карта поверх того,
+      // что вернул сервис (у бэка поле появится позже).
+      const { messageModels } = get();
+      const messages = loaded.map((item) =>
+        messageModels[item.id]
+          ? { ...item, modelId: messageModels[item.id] }
+          : item,
+      );
 
       set((state) => ({
         messages,
@@ -818,8 +838,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Автосвязь с правилом (R9.2): новое наблюдение на байтах, попавших
     // в поле правила. Правки существующих наблюдений не перепривязываются.
     if (observation.ruleId === undefined && range && range.length > 0) {
-      const { activeMessageId, bytes, models, activeModelId } = get();
-      const model = models?.find((item) => item.id === activeModelId) ?? null;
+      const { activeMessageId, bytes, models, activeModelId, messages } = get();
+      const message =
+        messages.find((item) => item.id === observation.messageId) ?? null;
+      // Своя модель сообщения (R10.1) или активная модель проекта.
+      const model = resolveMessageModel(message, models, activeModelId);
       if (model && bytes && activeMessageId === observation.messageId) {
         const apply = applyModelCached(observation.messageId, bytes, model);
         const field = apply.fields.find(
@@ -1188,6 +1211,31 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ fieldsSource: source });
   },
 
+  setMessageModel(messageId, modelId) {
+    const { messageModels, messages } = get();
+    const next = { ...messageModels };
+    if (modelId === null) {
+      delete next[messageId];
+    } else {
+      next[messageId] = modelId;
+    }
+
+    // Кэш разбора ключуется messageId:modelId — смена привязки лишь
+    // переключает сообщение на другой ключ, старая запись остаётся
+    // валидной для прежней пары. Инвалидация не нужна.
+    set({
+      messageModels: next,
+      messages: messages.map((item) => {
+        if (item.id !== messageId) return item;
+        if (modelId === null) {
+          const { modelId: _dropped, ...rest } = item;
+          return rest;
+        }
+        return { ...item, modelId };
+      }),
+    });
+  },
+
   invalidateModelFields(modelId) {
     invalidateApplyCache(modelId);
   },
@@ -1250,7 +1298,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   async removeModel(modelId) {
     await appService.removeModel(modelId);
     get().invalidateModelFields(modelId);
-    const { models, activeModelId } = get();
+    const { models, activeModelId, messageModels, messages } = get();
+
+    // Привязки на удалённую модель снимаются: сообщения вернутся
+    // к активной модели проекта.
+    const nextMessageModels = { ...messageModels };
+    for (const [messageId, linkedId] of Object.entries(nextMessageModels)) {
+      if (linkedId === modelId) delete nextMessageModels[messageId];
+    }
+    const nextMessages = messages.map((item) => {
+      if (item.modelId !== modelId) return item;
+      const { modelId: _dropped, ...rest } = item;
+      return rest;
+    });
+
     if (models === null) return;
 
     const next = models.filter((item) => item.id !== modelId);
@@ -1262,13 +1323,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         models: next,
         activeModelId: nextActiveId,
+        messageModels: nextMessageModels,
+        messages: nextMessages,
         checkResult: null,
         checkError: null,
         checkLoading: false,
       });
       return;
     }
-    set({ models: next, activeModelId: nextActiveId });
+    set({
+      models: next,
+      activeModelId: nextActiveId,
+      messageModels: nextMessageModels,
+      messages: nextMessages,
+    });
   },
 
   async collectExportData() {
@@ -1383,10 +1451,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().setActiveModel(project.active.modelId);
     }
 
-    // Источник полей и последняя проверка.
+    // Источник полей, привязки сообщений к моделям и последняя проверка.
     checkToken += 1;
     set({
       fieldsSource: project.active.fieldsSource,
+      messageModels: project.active.messageModels ?? {},
       checkResult: project.checkResult,
       checkError: null,
       checkLoading: false,
@@ -1655,6 +1724,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       journalCount: null,
       models: null,
       activeModelId: null,
+      messageModels: {},
       modelsLoading: false,
       modelEditorOpen: false,
       staleWarning: null,

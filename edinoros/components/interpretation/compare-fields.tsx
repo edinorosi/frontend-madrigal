@@ -30,9 +30,9 @@ const MARK_TONE: Record<CompareMark, string> = {
 };
 
 const ROW_TONE: Partial<Record<CompareMark, string>> = {
-  diff: "bg-diff/25",
-  onlyA: "bg-destructive/5",
-  onlyB: "bg-ok/10",
+  diff: "bg-diff/10",
+  onlyA: "bg-destructive/8",
+  onlyB: "bg-ok/8",
 };
 
 /** Слияние полей двух сообщений по имени: общие, только A, только B. */

@@ -29,6 +29,7 @@ export function Topbar() {
 
   const backToProjects = useProjectsStore((state) => state.backToProjects);
   const leaving = useProjectsStore((state) => state.busy);
+  const saving = useProjectsStore((state) => state.saving);
 
   const compareMessageId = useAppStore((state) => state.compareMessageId);
   const activeMessageNumber = useAppStore(
@@ -60,12 +61,12 @@ export function Topbar() {
         variant="ghost"
         size="sm"
         className="h-7 shrink-0 gap-1 px-2"
-        disabled={leaving}
+        disabled={leaving || saving}
         title="Сохранить проект и вернуться к списку"
         onClick={() => void backToProjects()}
       >
         <ArrowLeft className="size-4" />
-        Проекты
+        {saving ? "Сохранение…" : "Проекты"}
       </Button>
       <Separator orientation="vertical" className="mx-1 h-5" />
       <Button

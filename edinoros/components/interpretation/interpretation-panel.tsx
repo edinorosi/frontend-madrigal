@@ -51,6 +51,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { describeRange } from "@/src/lib/hex";
+import { resolveMessageModel } from "@/src/lib/message-model";
 import {
   MODEL_STATUS_LABEL,
   MODEL_STATUS_TONE,
@@ -76,6 +77,12 @@ const NOTICE_MS = 700;
 
 /** Сколько непокрытых диапазонов перечислять, прежде чем оставить счётчик. */
 const UNCOVERED_LIMIT = 6;
+
+/**
+ * Значение селекта «Модель сообщения» для наследования: сообщение разбирается
+ * активной моделью проекта (R10.1). Radix Select не принимает пустую строку.
+ */
+const PROJECT_MODEL_SENTINEL = "__project__";
 
 const INTERPRETATION_LABEL: Record<InterpretationStatus, string> = {
   parsed: "разобрано",
@@ -298,9 +305,20 @@ export function InterpretationPanel({
   const bytes = useAppStore((state) => state.bytes);
   const models = useAppStore((state) => state.models);
   const activeModelId = useAppStore((state) => state.activeModelId);
+  const setMessageModel = useAppStore((state) => state.setMessageModel);
   const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
+  /**
+   * Модель сообщения (R10.1): своя модель или активная модель проекта.
+   * Именно она разбирает поля — не глобальная активная.
+   */
+  const messageModel = useMemo(
+    () => resolveMessageModel(message, models, activeModelId),
+    [message, models, activeModelId],
+  );
   const messages = useAppStore((state) => state.messages);
   const getMessageBytes = useAppStore((state) => state.getMessageBytes);
+  // Клик по глифу дельты открывает сравнение с предыдущим сообщением.
+  const startCompare = useAppStore((state) => state.startCompare);
 
   /** Имена правил по id — подпись «правило: X» у наблюдений (R9.2). */
   const ruleNamesById = useMemo(() => {
@@ -314,15 +332,15 @@ export function InterpretationPanel({
   }, [models]);
 
   /**
-   * Клиентский разбор (R3-б): поля считаются из байтов и правил активной
-   * модели. Кэш — в applyModelCached, пересчёта на рендере нет.
+   * Клиентский разбор (R3-б): поля считаются из байтов и правил модели
+   * сообщения. Кэш — в applyModelCached, пересчёта на рендере нет.
    */
   const modelApply = useMemo(() => {
-    if (fieldsSource !== "model" || !bytes || !activeModel || !message) {
+    if (fieldsSource !== "model" || !bytes || !messageModel || !message) {
       return null;
     }
-    return applyModelCached(message.id, bytes, activeModel);
-  }, [fieldsSource, bytes, activeModel, message]);
+    return applyModelCached(message.id, bytes, messageModel);
+  }, [fieldsSource, bytes, messageModel, message]);
 
   const displayedFields =
     fieldsSource === "model" ? (modelApply?.fields ?? []) : message?.fields ?? [];
@@ -374,13 +392,15 @@ export function InterpretationPanel({
       fieldsSource !== "model" ||
       prevMessage === null ||
       prevBytes === null ||
-      prevBytes.messageId !== prevMessage.id ||
-      !activeModel
+      prevBytes.messageId !== prevMessage.id
     ) {
       return null;
     }
-    return applyModelCached(prevMessage.id, prevBytes.bytes, activeModel);
-  }, [fieldsSource, prevMessage, prevBytes, activeModel]);
+    // Дельта считается моделями обоих сообщений — у каждого своя привязка.
+    const prevModel = resolveMessageModel(prevMessage, models, activeModelId);
+    if (!prevModel) return null;
+    return applyModelCached(prevMessage.id, prevBytes.bytes, prevModel);
+  }, [fieldsSource, prevMessage, prevBytes, models, activeModelId]);
 
   const prevFields = useMemo(() => {
     if (prevMessage === null) return null;
@@ -648,16 +668,16 @@ export function InterpretationPanel({
               <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                 Поля
               </h3>
-              {fieldsSource === "model" && activeModel ? (
+              {fieldsSource === "model" && messageModel ? (
                 <Badge
                   variant="outline"
                   className={cn(
                     "px-1.5 text-[10px] font-normal",
-                    MODEL_STATUS_TONE[activeModel.status],
+                    MODEL_STATUS_TONE[messageModel.status],
                   )}
-                  title={`Модель: ${activeModel.name}`}
+                  title={`Модель: ${messageModel.name}`}
                 >
-                  {activeModel.name} · {MODEL_STATUS_LABEL[activeModel.status]} ·{" "}
+                  {messageModel.name} · {MODEL_STATUS_LABEL[messageModel.status]} ·{" "}
                   {displayedFields.length} пол.
                 </Badge>
               ) : null}
@@ -677,7 +697,36 @@ export function InterpretationPanel({
                   правило: {modelApply.ruleName}
                 </span>
               ) : null}
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-1">
+                <Select
+                  value={message.modelId ?? PROJECT_MODEL_SENTINEL}
+                  onValueChange={(value) =>
+                    setMessageModel(
+                      message.id,
+                      value === PROJECT_MODEL_SENTINEL ? null : value,
+                    )
+                  }
+                  onOpenChange={(open) => setOverlayOpen(open)}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="h-6 w-[136px] text-[10px]"
+                    aria-label="Модель сообщения"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={PROJECT_MODEL_SENTINEL}>
+                      Как у проекта
+                      {activeModel ? ` (${activeModel.name})` : ""}
+                    </SelectItem>
+                    {models?.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <Select
                   value={fieldsSource}
                   onValueChange={(value) => setFieldsSource(value as FieldsSource)}
@@ -692,7 +741,7 @@ export function InterpretationPanel({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="json">JSON</SelectItem>
-                    <SelectItem value="model" disabled={!activeModel}>
+                    <SelectItem value="model" disabled={!messageModel}>
                       Модель
                     </SelectItem>
                   </SelectContent>
@@ -700,9 +749,9 @@ export function InterpretationPanel({
               </div>
             </div>
 
-            {fieldsSource === "model" && !activeModel ? (
+            {fieldsSource === "model" && !messageModel ? (
               <p className="text-xs text-muted-foreground">
-                Активная модель не выбрана
+                Модель не выбрана
               </p>
             ) : fieldsSource === "model" && !bytes ? (
               <p className="text-xs text-muted-foreground">Загрузка байтов…</p>
@@ -723,6 +772,10 @@ export function InterpretationPanel({
                 onSelectRange={onSelectRange}
                 ruleName={
                   fieldsSource === "model" ? (modelApply?.ruleName ?? null) : null
+                }
+                prevPacketNumber={prevMessage?.packetNumber ?? null}
+                onComparePrev={
+                  prevMessage ? () => void startCompare(prevMessage.id) : null
                 }
               />
             )}

@@ -118,6 +118,7 @@ export function ExportButton() {
         sessionId: useAppStore.getState().activeSessionId,
         messageId: useAppStore.getState().activeMessageId,
         fieldsSource: useAppStore.getState().fieldsSource,
+        messageModels: useAppStore.getState().messageModels,
       });
       downloadJson(projectFileName(data.capture?.fileName ?? null), project);
     }, "Проект скачан");

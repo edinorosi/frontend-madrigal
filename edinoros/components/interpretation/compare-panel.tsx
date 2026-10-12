@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { computeDiff, type DiffTail } from "@/src/lib/diff";
 import { formatBytes } from "@/src/lib/format";
+import { resolveMessageModel } from "@/src/lib/message-model";
 import { applyModelCached } from "@/src/lib/parse";
 import { useAppStore } from "@/src/store/app";
 import type { Message } from "@/src/types/domain";
@@ -86,26 +87,35 @@ export function ComparePanel() {
 
   // Поля A и B считаются тем же источником, что и в интерпретации:
   // JSON — готовые, «Модель» — из байтов, которые уже загружены.
+  // У каждого сообщения своя модель (R10.1): если привязки разные,
+  // результаты сравниваются как есть.
   const fieldsSource = useAppStore((state) => state.fieldsSource);
   const models = useAppStore((state) => state.models);
   const activeModelId = useAppStore((state) => state.activeModelId);
-  const activeModel = models?.find((item) => item.id === activeModelId) ?? null;
+  const modelA = useMemo(
+    () => resolveMessageModel(messageA, models, activeModelId),
+    [messageA, models, activeModelId],
+  );
+  const modelB = useMemo(
+    () => resolveMessageModel(messageB, models, activeModelId),
+    [messageB, models, activeModelId],
+  );
 
   const fieldsA = useMemo(() => {
     if (!messageA) return [];
-    if (fieldsSource === "model" && bytesA && activeModel) {
-      return applyModelCached(messageA.id, bytesA, activeModel).fields;
+    if (fieldsSource === "model" && bytesA && modelA) {
+      return applyModelCached(messageA.id, bytesA, modelA).fields;
     }
     return messageA.fields;
-  }, [messageA, fieldsSource, bytesA, activeModel]);
+  }, [messageA, fieldsSource, bytesA, modelA]);
 
   const fieldsB = useMemo(() => {
     if (!messageB) return [];
-    if (fieldsSource === "model" && compareBytes && activeModel) {
-      return applyModelCached(messageB.id, compareBytes, activeModel).fields;
+    if (fieldsSource === "model" && compareBytes && modelB) {
+      return applyModelCached(messageB.id, compareBytes, modelB).fields;
     }
     return messageB.fields;
-  }, [messageB, fieldsSource, compareBytes, activeModel]);
+  }, [messageB, fieldsSource, compareBytes, modelB]);
 
   const diff = useMemo(() => {
     if (!bytesA || !compareBytes) return null;

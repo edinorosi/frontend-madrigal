@@ -34,8 +34,20 @@ export interface DiffResult {
  * Сравнивает сообщения побайтно в общей части; всё, что за её пределами, — хвост.
  * Хвост не разворачивается в отдельные байты: на сообщении в несколько КиБ
  * это тысячи записей ради одной и той же информации.
+ *
+ * Однослотовый кэш: HEX-маска и панель сравнения считают дифф на одних и тех же
+ * байтах в одном рендере — второй вызов отдаёт прежний результат без перебора.
+ * Функция чистая; изменение байтов на месте не предполагается.
  */
+let lastA: Uint8Array | null = null;
+let lastB: Uint8Array | null = null;
+let lastResult: DiffResult | null = null;
+
 export function computeDiff(bytesA: Uint8Array, bytesB: Uint8Array): DiffResult {
+  if (lastA === bytesA && lastB === bytesB && lastResult !== null) {
+    return lastResult;
+  }
+
   const common = Math.min(bytesA.length, bytesB.length);
   const diffBytes: DiffByte[] = [];
 
@@ -57,7 +69,7 @@ export function computeDiff(bytesA: Uint8Array, bytesB: Uint8Array): DiffResult 
     };
   }
 
-  return {
+  const result: DiffResult = {
     diffBytes,
     tail,
     stats: {
@@ -67,11 +79,21 @@ export function computeDiff(bytesA: Uint8Array, bytesB: Uint8Array): DiffResult 
       firstDiffOffset: diffBytes.length > 0 ? diffBytes[0].offset : null,
     },
   };
+
+  lastA = bytesA;
+  lastB = bytesB;
+  lastResult = result;
+  return result;
 }
+
+/** Потолок отрезков для мини-карты: больше — склеиваем соседние. */
+const MAX_MASK_RANGES = 256;
 
 /**
  * Слитные отрезки маски: подряд идущие единицы — один отрезок.
  * Нужно мини-карте: рисовать 4096 отдельных меток вместо одного отрезка незачем.
+ * При числе отрезков больше MAX_MASK_RANGES соседние склеиваются через зазор —
+ * мини-карта остаётся обзором, а не точной картой.
  */
 export function maskToRanges(mask: Uint8Array): ByteRange[] {
   const ranges: ByteRange[] = [];
@@ -90,5 +112,24 @@ export function maskToRanges(mask: Uint8Array): ByteRange[] {
     ranges.push({ offset: start, length: mask.length - start });
   }
 
-  return ranges;
+  if (ranges.length <= MAX_MASK_RANGES) {
+    return ranges;
+  }
+
+  // Склейка: каждые step отрезков схлопываются в один, покрывающий и зазор.
+  const step = Math.ceil(ranges.length / MAX_MASK_RANGES);
+  const merged: ByteRange[] = [];
+  let current = { ...ranges[0] };
+  for (let index = 1; index < ranges.length; index += 1) {
+    const range = ranges[index];
+    if (index % step === 0) {
+      merged.push(current);
+      current = { ...range };
+    } else {
+      const end = range.offset + range.length;
+      current = { offset: current.offset, length: end - current.offset };
+    }
+  }
+  merged.push(current);
+  return merged;
 }

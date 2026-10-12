@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isTypingTarget } from "@/src/lib/keyboard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -76,11 +77,12 @@ function CheckStatusIcon({ row }: { row: CheckRow }) {
 
   return (
     <span
+      role="img"
       title={title}
       aria-label={title}
       className={cn("inline-flex shrink-0", tone)}
     >
-      <Icon className="size-3.5" />
+      <Icon className="size-3.5" aria-hidden="true" />
     </span>
   );
 }
@@ -92,31 +94,39 @@ function SummaryChips({ result }: { result: CheckResult }) {
   return (
     <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
       <span
+        role="img"
         className="flex items-center gap-0.5 text-ok"
         title="Значение совпало с ожидаемым"
+        aria-label={`Совпало: ${summary.ok}`}
       >
-        <Check className="size-3" />
+        <Check className="size-3" aria-hidden="true" />
         {summary.ok}
       </span>
       <span
+        role="img"
         className="flex items-center gap-0.5 text-warn"
         title="Значение не извлечено, но кадр разобран"
+        aria-label={`Не извлечено: ${summary.partial}`}
       >
-        <CircleDashed className="size-3" />
+        <CircleDashed className="size-3" aria-hidden="true" />
         {summary.partial}
       </span>
       <span
+        role="img"
         className="flex items-center gap-0.5 text-muted-foreground"
         title="Не удалось проверить"
+        aria-label={`Не проверено: ${summary.unknown}`}
       >
-        <CircleHelp className="size-3" />
+        <CircleHelp className="size-3" aria-hidden="true" />
         {summary.unknown}
       </span>
       <span
+        role="img"
         className="flex items-center gap-0.5 text-destructive"
         title="Значение не совпало с ожидаемым"
+        aria-label={`Расхождение: ${summary.error}`}
       >
-        <X className="size-3" />
+        <X className="size-3" aria-hidden="true" />
         {summary.error}
       </span>
     </div>
@@ -282,6 +292,7 @@ function CaptureSelect() {
 export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: boolean }) {
   const result = useAppStore((state) => state.checkResult);
   const loading = useAppStore((state) => state.checkLoading);
+  const cancelCheck = useAppStore((state) => state.cancelCheck);
   const error = useAppStore((state) => state.checkError);
   const warnings = useAppStore((state) => state.checkWarnings);
   const coverage = useAppStore((state) => state.checkCoverage);
@@ -322,7 +333,10 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
     if (escapeDelegated) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeCheck();
+      if (event.key !== "Escape") return;
+      // Esc из поля ввода завершает ввод, а не закрывает панель.
+      if (isTypingTarget(event.target)) return;
+      closeCheck();
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -398,6 +412,16 @@ export function CheckPanel({ escapeDelegated = false }: { escapeDelegated?: bool
           >
             <RefreshCw className="size-3" />
             Перепроверить
+          </Button>
+        ) : null}
+        {loading ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto h-6 gap-1 px-2 text-[11px]"
+            onClick={cancelCheck}
+          >
+            Отменить
           </Button>
         ) : null}
       </header>

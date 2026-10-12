@@ -62,6 +62,7 @@ export function SessionList() {
             <button
               key={row.key}
               type="button"
+              aria-current={active ? "true" : undefined}
               onClick={() => void selectSession(session.id)}
               style={{
                 position: "absolute",
@@ -77,7 +78,7 @@ export function SessionList() {
                 active && "bg-sidebar-accent",
               )}
             >
-              <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center justify-between gap-2">
                 <span
                   className={cn(
                     "truncate font-mono text-[11px]",
@@ -92,13 +93,13 @@ export function SessionList() {
                 >
                   {session.messageCount}
                 </Badge>
-              </div>
-              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+              </span>
+              <span className="flex items-center justify-between text-[10px] text-muted-foreground">
                 <span className="font-mono">
                   {formatClock(session.startedAt)}
                 </span>
                 <span>{formatDate(session.startedAt)}</span>
-              </div>
+              </span>
             </button>
           );
         })}

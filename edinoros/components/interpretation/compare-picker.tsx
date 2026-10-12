@@ -98,10 +98,14 @@ export function ComparePicker() {
           Сравнить с…
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[min(20rem,90vw)] p-0">
+      <PopoverContent
+        align="start"
+        className="w-[min(20rem,90vw)] p-0"
+        aria-label="Сравнить сообщение"
+      >
         <Command>
-          <CommandInput placeholder="Поиск по номеру или метке" />
-          <CommandList>
+          <CommandInput placeholder="Поиск по номеру или метке" aria-label="Поиск" />
+          <CommandList label="Сообщения">
             <CommandEmpty>Ничего не найдено</CommandEmpty>
             {messages.map((message) => (
               <CommandItem

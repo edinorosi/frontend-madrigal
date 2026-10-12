@@ -68,6 +68,8 @@ interface AppState {
   messagesError: string | null;
 
   bytes: Uint8Array | null;
+  /** Ошибка загрузки байтов активного сообщения — блок «Повторить» в HEX. */
+  bytesError: string | null;
   observations: Observation[];
 
   /** Текущее выделение байтов в HEX. */
@@ -207,6 +209,8 @@ interface AppState {
   openCheck: () => Promise<void>;
   closeCheck: () => void;
   runCheck: () => Promise<void>;
+  /** Отмена идущей проверки: гасит токен и убирает индикатор загрузки. */
+  cancelCheck: () => void;
   /** Загрузка моделей разбора (R3). Сбой не роняет просмотр записи. */
   loadModels: () => Promise<void>;
   /** Выбор активной модели; null — сбросить выбор. */
@@ -228,6 +232,8 @@ interface AppState {
   setHoveredField: (fieldId: string | null) => void;
   setSidebarTab: (tab: SidebarTab) => void;
   toggleSidebar: () => void;
+  /** Явная установка состояния сайдбара (автосвёрт на узких экранах). */
+  setSidebarCollapsed: (collapsed: boolean) => void;
   startImport: (file: File) => Promise<void>;
   setImportProgress: (value: number) => void;
   cancelImport: () => void;
@@ -288,6 +294,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   messagesError: null,
 
   bytes: null,
+  bytesError: null,
   observations: [],
 
   selection: null,
@@ -550,7 +557,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Проверка (R4.2) идёт по выбранным записям, а не по активной —
     // результат и открытая панель при смене активной записи не трогаем.
 
-    set((state) => ({
+    set({
       activeCaptureId: captureId,
       sessions: [],
       activeSessionId: null,
@@ -558,11 +565,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeMessageId: null,
       messagesError: null,
       bytes: null,
+      bytesError: null,
       observations: [],
       selection: null,
       journalCount: null,
-      loading: { ...state.loading, sessions: true },
-    }));
+      // Каскадный сброс: флаги нижестоящих загрузок не должны пережить
+      // смену записи — иначе отброшенный ответ оставит скелетон вечно.
+      loading: { ...NO_LOADING, sessions: true },
+    });
 
     try {
       // Журнал параллельно с сессиями: он решает, показывать ли кнопку
@@ -598,16 +608,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Сбрасываем до загрузки: иначе байты прежнего сравнения успеют мигнуть.
     get().stopCompare();
 
-    set((state) => ({
+    set({
       activeSessionId: sessionId,
       messages: [],
       activeMessageId: null,
       messagesError: null,
       bytes: null,
+      bytesError: null,
       observations: [],
       selection: null,
-      loading: { ...state.loading, messages: true },
-    }));
+      // Каскадный сброс: messages — в загрузке, всё ниже — сброшено.
+      loading: { ...NO_LOADING, messages: true },
+    });
 
     try {
       const messages = await appService.listMessages(sessionId);
@@ -644,6 +656,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       activeMessageId: messageId,
       bytes: null,
+      bytesError: null,
       observations: [],
       selection: null,
     });
@@ -668,6 +681,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       set((state) => ({
         bytes,
+        bytesError: null,
         observations,
         loading: { ...state.loading, bytes: false, observations: false },
       }));
@@ -675,6 +689,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (token !== requestToken) return;
       set((state) => ({
         loading: { ...state.loading, bytes: false, observations: false },
+        bytesError: describeError(error),
         error: describeError(error),
       }));
     }
@@ -816,6 +831,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   closeCheck() {
     set({ checkOpen: false });
+  },
+
+  cancelCheck() {
+    // Токен гасит ответ идущего прогона; панель остаётся открытой.
+    checkToken += 1;
+    set({ checkLoading: false });
   },
 
   setCheckCaptureIds(ids) {
@@ -1278,14 +1299,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     // Сообщение может жить в другой сессии — ищем по спискам сессий записи.
-    const { sessions } = get();
-    for (const session of sessions) {
-      const list = await appService.listMessages(session.id);
-      if (list.some((item) => item.id === messageId)) {
-        await get().selectSession(session.id);
-        await get().selectMessage(messageId);
-        return;
+    try {
+      const { sessions } = get();
+      for (const session of sessions) {
+        const list = await appService.listMessages(session.id);
+        if (list.some((item) => item.id === messageId)) {
+          await get().selectSession(session.id);
+          await get().selectMessage(messageId);
+          return;
+        }
       }
+    } catch (error) {
+      // Сбой поиска не должен давать unhandled rejection (void gotoMessage).
+      set({ error: describeError(error) });
     }
   },
 
@@ -1321,10 +1347,36 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed }));
   },
 
+  setSidebarCollapsed(collapsed) {
+    set({ sidebarCollapsed: collapsed });
+  },
+
   async startImport(file) {
     const token = ++importToken;
 
     set({ importPhase: "running", importProgress: 0, importError: null });
+
+    // Проверка до отправки в сервис: accept в диалоге — только подсказка.
+    const name = file.name.toLowerCase();
+    const allowed = [".pcap", ".pcapng", ".cap"];
+    if (!allowed.some((ext) => name.endsWith(ext))) {
+      set({
+        importPhase: "error",
+        importProgress: 0,
+        importError: `Не удалось прочитать ${file.name}: нужен файл ${allowed.join(" или ")}`,
+      });
+      return;
+    }
+    // Потолок на всякий случай: ТЗ закладывается на записи до ~100 МиБ.
+    const MAX_IMPORT_BYTES = 200 * 1024 * 1024;
+    if (file.size > MAX_IMPORT_BYTES) {
+      set({
+        importPhase: "error",
+        importProgress: 0,
+        importError: `Не удалось прочитать ${file.name}: файл больше 200 МиБ`,
+      });
+      return;
+    }
 
     try {
       const capture = await appService.importCapture(file);
@@ -1377,9 +1429,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeMessageId: null,
       messagesError: null,
       bytes: null,
+      bytesError: null,
       observations: [],
       selection: null,
       hoveredFieldId: null,
+      // Все флаги загрузки сбрасываются: отброшенные токенами ответы
+      // иначе оставят бы скелетоны вечно.
+      loading: NO_LOADING,
       compareMessageId: null,
       compareAttemptId: null,
       compareError: null,

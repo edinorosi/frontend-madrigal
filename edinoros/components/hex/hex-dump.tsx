@@ -1,11 +1,13 @@
 "use client";
 
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type RefObject,
 } from "react";
@@ -19,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isTypingTarget } from "@/src/lib/keyboard";
 import {
   HexContextMenu,
   type HexContextMenuItem,
@@ -119,6 +122,8 @@ export function HexDump({
   const noticeTimerRef = useRef<number | null>(null);
   const pointerSelectionRef = useRef(false);
   const insideSelectionRef = useRef(false);
+  /** Курсор клавиатурной навигации: позиция без сдвига выделения. */
+  const cursorRef = useRef(0);
   /** Последняя позиция курсора в координатах окна — нужна при автопрокрутке. */
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const autoScrollRef = useRef<number | null>(null);
@@ -223,6 +228,9 @@ export function HexDump({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
 
+      // Esc из поля ввода завершает ввод, а не закрывает панели.
+      if (isTypingTarget(event.target)) return;
+
       // Открытый Popover или Select закроется сам, ему и адресован Esc.
       if (overlayOpen) return;
 
@@ -301,6 +309,7 @@ export function HexDump({
       // preventDefault гасит фокус по клику — ставим его сами, чтобы работали
       // стрелки и PageUp/PageDown.
       scrollRef.current?.focus({ preventScroll: true });
+      cursorRef.current = index;
       pointerRef.current = { x: event.clientX, y: event.clientY };
 
       setMenu(null);
@@ -336,6 +345,95 @@ export function HexDump({
       onSelect({ offset: index, length: 1 });
     },
     [onSelect, scrollRef, selection],
+  );
+
+  // Стабильный диспетчер кликов: строкам нужна постоянная ссылка, а сам
+  // обработчик зависит от selection — живёт в ref.
+  const mouseDownRef = useRef(handleByteMouseDown);
+  mouseDownRef.current = handleByteMouseDown;
+  const stableByteMouseDown = useCallback(
+    (event: ReactMouseEvent, index: number) => {
+      mouseDownRef.current(event, index);
+    },
+    [],
+  );
+
+  // Курсор не должен выходить за пределы байтов при смене сообщения.
+  useEffect(() => {
+    if (cursorRef.current > bytes.length - 1) {
+      cursorRef.current = Math.max(0, bytes.length - 1);
+    }
+  }, [bytes.length]);
+
+  /**
+   * Клавиатурная навигация по байтам: стрелки двигают курсор, Shift растягивает
+   * выделение от якоря, Home/End — граница строки (Ctrl — потока), PageUp/Down —
+   * экран, Ctrl+A — всё сообщение.
+   */
+  const handleGridKeyDown = useCallback(
+    (event: ReactKeyboardEvent) => {
+      const pageSize =
+        Math.max(1, Math.floor((scrollRef.current?.clientHeight ?? 400) / ROW_HEIGHT)) *
+        BYTES_PER_ROW;
+
+      let next: number | null = null;
+      switch (event.key) {
+        case "ArrowRight":
+          next = cursorRef.current + 1;
+          break;
+        case "ArrowLeft":
+          next = cursorRef.current - 1;
+          break;
+        case "ArrowDown":
+          next = cursorRef.current + BYTES_PER_ROW;
+          break;
+        case "ArrowUp":
+          next = cursorRef.current - BYTES_PER_ROW;
+          break;
+        case "Home":
+          next = event.ctrlKey
+            ? 0
+            : cursorRef.current - (cursorRef.current % BYTES_PER_ROW);
+          break;
+        case "End":
+          next = event.ctrlKey
+            ? bytes.length - 1
+            : cursorRef.current -
+              (cursorRef.current % BYTES_PER_ROW) +
+              BYTES_PER_ROW -
+              1;
+          break;
+        case "PageDown":
+          next = cursorRef.current + pageSize;
+          break;
+        case "PageUp":
+          next = cursorRef.current - pageSize;
+          break;
+        case "a":
+        case "A":
+          if (event.ctrlKey || event.metaKey) {
+            event.preventDefault();
+            onSelect({ offset: 0, length: bytes.length });
+          }
+          return;
+        default:
+          return;
+      }
+
+      event.preventDefault();
+      const clamped = Math.max(0, Math.min(next, bytes.length - 1));
+      cursorRef.current = clamped;
+      virtualizer.scrollToIndex(Math.floor(clamped / BYTES_PER_ROW));
+
+      if (event.shiftKey) {
+        // Якорь — начало текущего выделения; без выделения якорь равен курсору.
+        const anchor = selection?.offset ?? clamped;
+        onSelect(rangeBetween(anchor, clamped));
+      } else {
+        onSelect({ offset: clamped, length: 1 });
+      }
+    },
+    [bytes.length, onSelect, scrollRef, selection, virtualizer],
   );
 
   /**
@@ -579,11 +677,31 @@ export function HexDump({
 
       const rect = scrollEl.getBoundingClientRect();
 
+      // Клавиатурный вызов (Shift+F10/ContextMenu) даёт clientX/Y = 0:
+      // привязываемся к ячейке выделения, а не к углу области.
+      let x = event.clientX - rect.left;
+      let y = event.clientY - rect.top;
+      if (event.clientX === 0 && event.clientY === 0) {
+        const anchorIndex = byteIndex ?? selection?.offset ?? 0;
+        const cell = scrollEl.querySelector<HTMLElement>(
+          `[data-byte-index="${anchorIndex}"]`,
+        );
+        if (cell) {
+          const cellRect = cell.getBoundingClientRect();
+          x = cellRect.left - rect.left;
+          y = cellRect.bottom - rect.top;
+        } else {
+          // Ячейка не отрисована (вне вьюпорта) — начало области.
+          x = 8;
+          y = 8;
+        }
+      }
+
       setPanel(null);
       setMenuNotice(null);
       setMenu({
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top,
+        x,
+        y,
         byteIndex,
         containerWidth: scrollEl.clientWidth,
         containerHeight: scrollEl.clientHeight,
@@ -672,129 +790,61 @@ export function HexDump({
   }, [menu, selection, openPanelFromMenu, copyRange, onShowSource, closeMenu, onSelect]);
 
   if (bytes.length === 0) {
-    return null;
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-xs text-muted-foreground">
+          В этом сообщении нет байтов
+        </p>
+      </div>
+    );
   }
 
   const contextByte = selection ? null : (menu?.byteIndex ?? null);
 
+  const selectionAnnounce = selection
+    ? `Выделено ${selection.length} байт с offset ${selection.offset}`
+    : "Выделения нет";
+
   return (
     <div className="relative h-full min-h-0">
+      <div aria-live="polite" className="sr-only">
+        {selectionAnnounce}
+      </div>
       <div
         ref={scrollRef}
         tabIndex={0}
+        role="grid"
+        aria-label="HEX-дамп"
+        aria-rowcount={rowCount}
         onContextMenu={handleContextMenu}
+        onKeyDown={handleGridKeyDown}
         className="no-scrollbar h-full overflow-auto font-mono text-xs select-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
       >
         <div
           className="relative w-full"
           style={{ height: virtualizer.getTotalSize() }}
         >
-          {virtualizer.getVirtualItems().map((row) => {
-            const rowStart = row.index * BYTES_PER_ROW;
-
-            return (
-              <div
-                key={row.key}
-                data-row
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: row.size,
-                  transform: `translateY(${row.start}px)`,
-                }}
-                className="flex items-center leading-none"
-              >
-                <span className="w-[4.5rem] shrink-0 pl-1 text-muted-foreground/70">
-                  {formatOffset(rowStart)}
-                </span>
-
-                <span className="flex shrink-0">
-                  {Array.from({ length: BYTES_PER_ROW }, (_, column) => {
-                    const index = rowStart + column;
-                    const exists = index < bytes.length;
-                    const selected = rangeHasIndex(selection, index);
-                    const highlighted = rangeHasIndex(highlight, index);
-                    const targeted = contextByte === index;
-                    const diffed = diffMask?.[index] === 1;
-                    const uncovered = uncoveredMask?.[index] === 1;
-
-                    return (
-                      <span
-                        key={column}
-                        data-cell={column === 0 ? "" : undefined}
-                        data-byte-index={exists ? index : undefined}
-                        onMouseDown={
-                          exists
-                            ? (event) => handleByteMouseDown(event, index)
-                            : undefined
-                        }
-                        className={cn(
-                          "w-[1.35rem] shrink-0 cursor-default text-center",
-                          !exists && "opacity-0",
-                          selected && "bg-primary/30 text-foreground",
-                          !selected && diffed && "bg-diff/40",
-                          !selected && !diffed && highlighted && "bg-warn/25",
-                          !selected &&
-                            !diffed &&
-                            !highlighted &&
-                            uncovered &&
-                            "bg-muted/60",
-                          !selected &&
-                            !diffed &&
-                            !highlighted &&
-                            "hover:bg-muted",
-                          targeted && "bg-primary/20 ring-1 ring-primary",
-                        )}
-                      >
-                        {byteToHex(bytes[index])}
-                      </span>
-                    );
-                  })}
-                </span>
-
-                <span className="ml-3 flex shrink-0 border-l border-border pl-3">
-                  {Array.from({ length: BYTES_PER_ROW }, (_, column) => {
-                    const index = rowStart + column;
-                    const exists = index < bytes.length;
-                    const selected = rangeHasIndex(selection, index);
-                    const highlighted = rangeHasIndex(highlight, index);
-                    const targeted = contextByte === index;
-                    const diffed = diffMask?.[index] === 1;
-                    const uncovered = uncoveredMask?.[index] === 1;
-
-                    return (
-                      <span
-                        key={column}
-                        data-byte-index={exists ? index : undefined}
-                        onMouseDown={
-                          exists
-                            ? (event) => handleByteMouseDown(event, index)
-                            : undefined
-                        }
-                        className={cn(
-                          "w-[0.62rem] shrink-0 text-center text-muted-foreground",
-                          !exists && "opacity-0",
-                          selected && "bg-primary/30 text-foreground",
-                          !selected && diffed && "bg-diff/40",
-                          !selected && !diffed && highlighted && "bg-warn/25",
-                          !selected &&
-                            !diffed &&
-                            !highlighted &&
-                            uncovered &&
-                            "bg-muted/60",
-                          targeted && "bg-primary/20 ring-1 ring-primary",
-                        )}
-                      >
-                        {byteToAscii(bytes[index])}
-                      </span>
-                    );
-                  })}
-                </span>
-              </div>
-            );
-          })}
+          {virtualizer.getVirtualItems().map((row) => (
+            <HexRow
+              key={row.key}
+              rowIndex={row.index}
+              top={row.start}
+              height={row.size}
+              bytes={bytes}
+              selectionStart={selection ? selection.offset : null}
+              selectionEnd={
+                selection ? selection.offset + selection.length : null
+              }
+              highlightStart={highlight ? highlight.offset : null}
+              highlightEnd={
+                highlight ? highlight.offset + highlight.length : null
+              }
+              contextByte={contextByte}
+              diffMask={diffMask ?? null}
+              uncoveredMask={uncoveredMask ?? null}
+              onByteMouseDown={stableByteMouseDown}
+            />
+          ))}
         </div>
       </div>
 
@@ -823,3 +873,144 @@ export function HexDump({
     </div>
   );
 }
+
+/**
+ * Строка HEX-дампа. Мемоизирована: при протяжке мышью перерисовываются
+ * только строки, чьи выделение/подсветка реально изменились (границы
+ * передаются числами, а не новым объектом ByteRange).
+ */
+const HexRow = memo(function HexRow({
+  rowIndex,
+  top,
+  height,
+  bytes,
+  selectionStart,
+  selectionEnd,
+  highlightStart,
+  highlightEnd,
+  contextByte,
+  diffMask,
+  uncoveredMask,
+  onByteMouseDown,
+}: {
+  rowIndex: number;
+  top: number;
+  height: number;
+  bytes: Uint8Array;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+  highlightStart: number | null;
+  highlightEnd: number | null;
+  contextByte: number | null;
+  diffMask: Uint8Array | null;
+  uncoveredMask: Uint8Array | null;
+  onByteMouseDown: (event: ReactMouseEvent, index: number) => void;
+}) {
+  const rowStart = rowIndex * BYTES_PER_ROW;
+
+  const inRange = (
+    start: number | null,
+    end: number | null,
+    index: number,
+  ) => start !== null && end !== null && index >= start && index < end;
+
+  return (
+    <div
+      data-row
+      role="row"
+      aria-rowindex={rowIndex + 1}
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height,
+        transform: `translateY(${top}px)`,
+      }}
+      className="flex items-center leading-none"
+    >
+      <span
+        role="rowheader"
+        className="w-[4.5rem] shrink-0 pl-1 text-muted-foreground/70"
+      >
+        {formatOffset(rowStart)}
+      </span>
+
+      <span role="presentation" className="flex shrink-0">
+        {Array.from({ length: BYTES_PER_ROW }, (_, column) => {
+          const index = rowStart + column;
+          const exists = index < bytes.length;
+          const selected = inRange(selectionStart, selectionEnd, index);
+          const highlighted = inRange(highlightStart, highlightEnd, index);
+          const targeted = contextByte === index;
+          const diffed = diffMask?.[index] === 1;
+          const uncovered = uncoveredMask?.[index] === 1;
+
+          return (
+            <span
+              key={column}
+              role="gridcell"
+              aria-selected={selected || undefined}
+              data-cell={column === 0 ? "" : undefined}
+              data-byte-index={exists ? index : undefined}
+              onMouseDown={
+                exists
+                  ? (event) => onByteMouseDown(event, index)
+                  : undefined
+              }
+              className={cn(
+                "w-[1.35rem] shrink-0 cursor-default text-center",
+                !exists && "opacity-0",
+                selected && "bg-primary/30 text-foreground",
+                !selected && diffed && "bg-diff/40",
+                !selected && !diffed && highlighted && "bg-warn/25",
+                !selected && !diffed && !highlighted && uncovered && "bg-muted/60",
+                !selected && !diffed && !highlighted && "hover:bg-muted",
+                targeted && "bg-primary/20 ring-1 ring-primary",
+              )}
+            >
+              {byteToHex(bytes[index])}
+            </span>
+          );
+        })}
+      </span>
+
+      <span
+        role="presentation"
+        className="ml-3 flex shrink-0 border-l border-border pl-3"
+      >
+        {Array.from({ length: BYTES_PER_ROW }, (_, column) => {
+          const index = rowStart + column;
+          const exists = index < bytes.length;
+          const selected = inRange(selectionStart, selectionEnd, index);
+          const highlighted = inRange(highlightStart, highlightEnd, index);
+          const targeted = contextByte === index;
+          const diffed = diffMask?.[index] === 1;
+          const uncovered = uncoveredMask?.[index] === 1;
+
+          return (
+            <span
+              key={column}
+              aria-hidden="true"
+              data-byte-index={exists ? index : undefined}
+              onMouseDown={
+                exists ? (event) => onByteMouseDown(event, index) : undefined
+              }
+              className={cn(
+                "w-[0.62rem] shrink-0 text-center text-muted-foreground",
+                !exists && "opacity-0",
+                selected && "bg-primary/30 text-foreground",
+                !selected && diffed && "bg-diff/40",
+                !selected && !diffed && highlighted && "bg-warn/25",
+                !selected && !diffed && !highlighted && uncovered && "bg-muted/60",
+                targeted && "bg-primary/20 ring-1 ring-primary",
+              )}
+            >
+              {byteToAscii(bytes[index])}
+            </span>
+          );
+        })}
+      </span>
+    </div>
+  );
+});

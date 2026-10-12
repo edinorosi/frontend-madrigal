@@ -14,6 +14,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { describeRange } from "@/src/lib/hex";
 import { createId } from "@/src/lib/ids";
+import { isTypingTarget } from "@/src/lib/keyboard";
 import { FIELD_TYPES } from "@/src/lib/observations";
 import { isInsideRadixPortal } from "@/src/lib/radix-portal";
 import type { ByteRange, Observation } from "@/src/types/domain";
@@ -74,6 +75,8 @@ export function SelectionPanel({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Esc из поля ввода завершает ввод, а не закрывает панель.
+      if (isTypingTarget(event.target)) return;
       // Esc принадлежит открытому списку: панель закрывать ещё рано.
       if (typeSelectOpen) return;
       event.stopPropagation();
@@ -207,10 +210,19 @@ export function SelectionPanel({
                 onValueChange={setType}
                 onOpenChange={setTypeSelectOpen}
               >
-                <SelectTrigger size="sm" className="w-full text-xs">
+                <SelectTrigger
+                  size="sm"
+                  className="w-full text-xs"
+                  aria-label="Тип поля"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  {/* Тип вне списка (из данных/бэка) показываем явно, а не
+                      пустым триггером. */}
+                  {!(FIELD_TYPES as readonly string[]).includes(type) ? (
+                    <SelectItem value={type}>{type}</SelectItem>
+                  ) : null}
                   {FIELD_TYPES.map((item) => (
                     <SelectItem key={item} value={item}>
                       {item}

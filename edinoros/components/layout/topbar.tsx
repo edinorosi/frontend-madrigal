@@ -1,5 +1,6 @@
 "use client";
 
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { ExportButton } from "@/components/export/export-button";
 import { ImportButton } from "@/components/import-button";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
@@ -34,11 +35,28 @@ export function Topbar() {
   const modelEditorOpen = useAppStore((state) => state.modelEditorOpen);
   const openModelEditor = useAppStore((state) => state.openModelEditor);
   const closeModelEditor = useAppStore((state) => state.closeModelEditor);
+  const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
+  const toggleSidebar = useAppStore((state) => state.toggleSidebar);
 
   const compareActive = compareMessageId !== null;
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-sidebar px-3">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 w-7 shrink-0 px-0"
+        title={sidebarCollapsed ? "Показать список" : "Скрыть список"}
+        aria-label={sidebarCollapsed ? "Показать список" : "Скрыть список"}
+        aria-expanded={!sidebarCollapsed}
+        onClick={toggleSidebar}
+      >
+        {sidebarCollapsed ? (
+          <PanelLeftOpen className="size-4" />
+        ) : (
+          <PanelLeftClose className="size-4" />
+        )}
+      </Button>
       <div className="flex min-w-0 items-center gap-2">
         <span className="truncate text-sm font-medium">
           {captureTitle(capture)}
@@ -82,12 +100,12 @@ export function Topbar() {
                 Закрыть
               </Button>
             </div>
-            <Separator orientation="vertical" className="mx-1 !h-5" />
+            <Separator orientation="vertical" className="mx-1 h-5" />
           </>
         ) : null}
         <ExportButton />
         <ImportButton size="sm" variant="outline" />
-        <Separator orientation="vertical" className="mx-1 !h-5" />
+        <Separator orientation="vertical" className="mx-1 h-5" />
         <ThemeToggle />
       </div>
     </header>

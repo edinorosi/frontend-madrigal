@@ -8,6 +8,7 @@ import { Topbar } from "@/components/layout/topbar";
 import { WorkArea } from "@/components/layout/work-area";
 import { ModelEditor } from "@/components/model/model-editor";
 import { StaleWarningDialog } from "@/components/model/stale-warning-dialog";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/src/store/app";
 
 /**
@@ -25,10 +26,20 @@ const DevMenu =
 export default function Page() {
   const loadProject = useAppStore((state) => state.loadProject);
   const modelEditorOpen = useAppStore((state) => state.modelEditorOpen);
+  const setSidebarCollapsed = useAppStore(
+    (state) => state.setSidebarCollapsed,
+  );
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     void loadProject();
   }, [loadProject]);
+
+  // На узких экранах список свёрнут по умолчанию; пользователь может открыть
+  // его кнопкой в шапке — эффект реагирует только на смену ширины.
+  useEffect(() => {
+    if (isMobile) setSidebarCollapsed(true);
+  }, [isMobile, setSidebarCollapsed]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">

@@ -17,6 +17,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isTypingTarget } from "@/src/lib/keyboard";
 import { EmptyHint } from "@/components/empty-hint";
 import {
   HexContextMenu,
@@ -132,6 +133,8 @@ export function MessageList() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Esc из поля ввода завершает ввод (фильтры), а не закрывает меню.
+      if (isTypingTarget(event.target)) return;
       if (menu) closeMenu();
     };
 
@@ -306,6 +309,7 @@ export function MessageList() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Поиск по метке"
+          aria-label="Поиск по метке"
           className="h-7 text-xs"
         />
         <div className="flex gap-1.5">
@@ -313,7 +317,11 @@ export function MessageList() {
             value={direction}
             onValueChange={(value) => setDirection(value as "all" | Direction)}
           >
-            <SelectTrigger size="sm" className="h-7 flex-1 text-xs">
+            <SelectTrigger
+              size="sm"
+              className="h-7 flex-1 text-xs"
+              aria-label="Направление"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -327,7 +335,11 @@ export function MessageList() {
             value={status}
             onValueChange={(value) => setStatus(value as "all" | ParseStatus)}
           >
-            <SelectTrigger size="sm" className="h-7 flex-1 text-xs">
+            <SelectTrigger
+              size="sm"
+              className="h-7 flex-1 text-xs"
+              aria-label="Статус разбора"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -361,6 +373,7 @@ export function MessageList() {
                   <button
                     key={row.key}
                     type="button"
+                    aria-current={active ? "true" : undefined}
                     data-message-id={message.id}
                     onClick={() => void selectMessage(message.id)}
                     style={{
@@ -379,12 +392,12 @@ export function MessageList() {
                   >
                     <MessageRow message={message} />
 
-                    <div className="flex items-center justify-between pl-8 text-[10px] text-muted-foreground">
+                    <span className="flex items-center justify-between pl-8 text-[10px] text-muted-foreground">
                       <span className="font-mono">{formatBytes(message.length)}</span>
                       <span className="font-mono">
                         {formatClock(message.timestamp)}
                       </span>
-                    </div>
+                    </span>
                   </button>
                 );
               })}

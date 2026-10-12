@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isTypingTarget } from "@/src/lib/keyboard";
 import {
   HexContextMenu,
   type HexContextMenuItem,
@@ -152,6 +153,8 @@ export function ModelEditor() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Esc из поля ввода завершает ввод, а не закрывает редактор.
+      if (isTypingTarget(event.target)) return;
       if (menu) {
         setMenu(null);
         setOverlayOpen(false);

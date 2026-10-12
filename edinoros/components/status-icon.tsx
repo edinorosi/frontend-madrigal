@@ -20,11 +20,12 @@ export function StatusIcon({
 
   return (
     <span
+      role="img"
       title={title}
       aria-label={title}
       className={cn("inline-flex shrink-0", tone, className)}
     >
-      <Icon className="size-3.5" />
+      <Icon className="size-3.5" aria-hidden="true" />
     </span>
   );
 }

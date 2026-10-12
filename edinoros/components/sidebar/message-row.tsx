@@ -38,7 +38,7 @@ export function MessageRow({
   const isRequest = message.direction === "request";
 
   return (
-    <div className={cn("flex min-w-0 items-center gap-1.5", className)}>
+    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
       <span
         title={PACKET_NUMBER_TITLE}
         className="shrink-0 font-mono text-[10px] text-muted-foreground"
@@ -65,6 +65,6 @@ export function MessageRow({
         )}
         <StatusIcon status={message.status} />
       </span>
-    </div>
+    </span>
   );
 }

@@ -14,6 +14,8 @@ export function SidebarPanel() {
 
   return (
     <aside
+      // Свёрнутая панель скрыта и выключена из порядка табуляции.
+      inert={collapsed}
       className={cn(
         "flex shrink-0 flex-col overflow-hidden border-r bg-sidebar",
         "transition-[width,max-width,min-width] duration-200",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CheckPanel } from "@/components/check/check-panel";
 import { EmptyHint } from "@/components/empty-hint";
@@ -49,6 +50,9 @@ export function WorkArea() {
   );
 
   const bytes = useAppStore((state) => state.bytes);
+  const bytesError = useAppStore((state) => state.bytesError);
+  const selectMessage = useAppStore((state) => state.selectMessage);
+  const activeMessageId = useAppStore((state) => state.activeMessageId);
   const loadingBytes = useAppStore((state) => state.loading.bytes);
   const observations = useAppStore((state) => state.observations);
   const loadingObservations = useAppStore(
@@ -270,6 +274,21 @@ export function WorkArea() {
                   <EmptyHint>
                     Сообщение не выбрано — выберите его в списке слева
                   </EmptyHint>
+                ) : bytesError && !bytes ? (
+                  <div className="flex flex-col items-start gap-2 pt-1">
+                    <p className="text-xs text-destructive">{bytesError}</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={activeMessageId === null}
+                      onClick={() => {
+                        if (activeMessageId) void selectMessage(activeMessageId);
+                      }}
+                    >
+                      <RefreshCw className="size-3.5" />
+                      Повторить
+                    </Button>
+                  </div>
                 ) : loadingBytes || !bytes ? (
                   <div className="flex flex-col gap-1 pt-1">
                     {Array.from({ length: 12 }, (_, index) => (

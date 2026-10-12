@@ -50,6 +50,15 @@ const actions: Action[] = actionsJson as unknown as Action[];
 
 const captureBytes = buildCaptureBytes(fixtures);
 
+/**
+ * Байты по записям: у каждой записи свой поток (контракт getBytes).
+ * Базовой записи достаётся сгенерированный буфер; импортированные в моке
+ * копируют его же — реального парсинга нет, но адресация уже по captureId.
+ */
+const captureBytesById = new Map<string, Uint8Array>(
+  captures.map((capture) => [capture.id, captureBytes]),
+);
+
 function buildCaptureBytes(items: MessageFixture[]): Uint8Array {
   const ordered = [...items].sort((a, b) => a.byteOffset - b.byteOffset);
   const total = ordered.reduce(
@@ -125,6 +134,8 @@ export const mockService: AppService = {
       sessionCount: sessions.length,
     };
 
+    // Мок не парсит файл — импортированной записи достаётся тот же поток байтов.
+    captureBytesById.set(imported.id, captureBytes);
     recordImportedCapture(imported);
     return imported;
   },
@@ -148,17 +159,29 @@ export const mockService: AppService = {
       throw new Error("Не удалось загрузить сообщения сессии");
     }
 
-    return messages.filter(
-      (message) =>
-        message.sessionId === sessionId &&
-        (direction === undefined || message.direction === direction),
-    );
+    // Контракт: без direction — обе стороны одним потоком, упорядоченным
+    // по времени. Сортировка явная: порядок строк в JSON не договариваемость.
+    return messages
+      .filter(
+        (message) =>
+          message.sessionId === sessionId &&
+          (direction === undefined || message.direction === direction),
+      )
+      .sort(
+        (a, b) =>
+          a.timestamp.localeCompare(b.timestamp) || a.byteOffset - b.byteOffset,
+      );
   },
 
   async getBytes(captureId: string, offset: number, length: number) {
     const { latencyMs } = readMockSettings();
     await delay(latencyMs);
-    return captureBytes.slice(offset, offset + length);
+
+    const stream = captureBytesById.get(captureId);
+    if (!stream) {
+      throw new Error(`Запись ${captureId} не найдена`);
+    }
+    return stream.slice(offset, offset + length);
   },
 
   /** Upsert: совпадение по id означает правку, иначе добавление. */
@@ -228,7 +251,8 @@ export const mockService: AppService = {
 
       // Применяем модель к байтам сообщения (R3-г): статус и поля — из модели,
       // а не из JSON-статуса сообщения.
-      const bytes = captureBytes.slice(
+      const stream = captureBytesById.get(captureId) ?? captureBytes;
+      const bytes = stream.slice(
         message.byteOffset,
         message.byteOffset + message.length,
       );

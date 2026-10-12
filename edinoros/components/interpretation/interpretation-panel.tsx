@@ -19,6 +19,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isTypingTarget } from "@/src/lib/keyboard";
 import { EmptyHint } from "@/components/empty-hint";
 import {
   HexContextMenu,
@@ -167,7 +168,21 @@ function ObservationEditForm({
   };
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <form
+      className="flex flex-col gap-1.5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!saving && canSave) void handleSave();
+      }}
+      onKeyDown={(event) => {
+        // Esc из поля ввода или с кнопки — отмена правки. Открытый список
+        // типов закрывается своим Esc, форме его не трогать.
+        if (event.key === "Escape" && !typeSelectOpen) {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+    >
       {observation.kind === "field" ? (
         <div className="flex flex-col gap-1.5">
           <Input
@@ -175,6 +190,7 @@ function ObservationEditForm({
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="имя поля"
+            aria-label="Имя поля"
             className="h-7 text-xs"
           />
           <Select
@@ -185,10 +201,15 @@ function ObservationEditForm({
               setOverlayOpen(open);
             }}
           >
-            <SelectTrigger size="sm" className="w-full text-xs">
+            <SelectTrigger size="sm" className="w-full text-xs" aria-label="Тип поля">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              {/* Тип вне списка (из данных/бэка) показываем явно, а не пустым
+                  триггером. */}
+              {!(FIELD_TYPES as readonly string[]).includes(type) ? (
+                <SelectItem value={type}>{type}</SelectItem>
+              ) : null}
               {FIELD_TYPES.map((item) => (
                 <SelectItem key={item} value={item}>
                   {item}
@@ -204,6 +225,14 @@ function ObservationEditForm({
         rows={observation.kind === "field" ? 2 : 3}
         value={text}
         onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          // Ctrl/Cmd+Enter — сохранить; Enter в многострочном — перенос.
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            if (!saving && canSave) void handleSave();
+          }
+        }}
+        aria-label="Комментарий"
         placeholder={
           observation.kind === "field"
             ? "Комментарий к полю (необязательно)"
@@ -217,18 +246,20 @@ function ObservationEditForm({
       ) : null}
 
       <div className="flex items-center gap-1">
-        <Button
-          size="sm"
-          disabled={saving || !canSave}
-          onClick={() => void handleSave()}
-        >
+        <Button type="submit" size="sm" disabled={saving || !canSave}>
           Сохранить
         </Button>
-        <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={saving}
+          onClick={onCancel}
+        >
           Отмена
         </Button>
       </div>
-    </div>
+    </form>
   );
 }
 
@@ -331,6 +362,8 @@ export function InterpretationPanel({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Esc из поля ввода завершает ввод, а не закрывает меню.
+      if (isTypingTarget(event.target)) return;
       if (menu) closeMenu();
     };
 
@@ -572,7 +605,11 @@ export function InterpretationPanel({
                   onValueChange={(value) => setFieldsSource(value as FieldsSource)}
                   onOpenChange={(open) => setOverlayOpen(open)}
                 >
-                  <SelectTrigger size="sm" className="h-6 w-[104px] text-[10px]">
+                  <SelectTrigger
+                    size="sm"
+                    className="h-6 w-[104px] text-[10px]"
+                    aria-label="Источник полей"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

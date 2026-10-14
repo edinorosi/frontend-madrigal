@@ -634,7 +634,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   async loadProject() {
     set((state) => ({
       loading: { ...state.loading, captures: true },
-      error: null,
     }));
 
     try {
@@ -1732,7 +1731,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       applyCaptureSummary: null,
       applyCaptureError: null,
       fieldsSource: "json",
-      error: null,
+      // error намеренно не сбрасывается: он показывается баннером рабочей
+      // области до явного скрытия. Иначе при повторном открытии проекта
+      // (ошибка та же) баннер не появится снова.
       importPhase: "idle",
       importProgress: 0,
       importError: null,

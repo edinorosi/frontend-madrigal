@@ -218,3 +218,18 @@ export function emptyProjectData(): ProjectExportFile {
     checkResult: null,
   };
 }
+
+/**
+ * Пустой снимок: проект не содержит ни записи, ни моделей, ни наблюдений.
+ * Такой снимок возникает, когда проект создавался, но бэкенд ещё не вернул
+ * данные (например, роуты не реализованы). При восстановлении такого снимка
+ * из localStorage фронт обязан запросить данные заново — иначе показывается
+ * пустая рабочая зона без ошибки.
+ */
+export function isEmptySnapshot(data: ProjectExportFile): boolean {
+  return (
+    data.capture === null &&
+    data.models.length === 0 &&
+    data.observations.length === 0
+  );
+}

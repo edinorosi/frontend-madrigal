@@ -16,10 +16,12 @@ import {
   buildProjectExport,
   parseProjectExport,
   projectFileName,
+  type ProjectExportFile,
 } from "@/src/lib/export/project-export";
 import {
   DEMO_PROJECT_ID,
   emptyProjectData,
+  isEmptySnapshot,
   nextProjectId,
   projectTitle,
   readIndex,
@@ -335,7 +337,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       set({ busy: false, error: STORAGE_ERROR });
       return;
     }
-    set({ projects: next, busy: false, error: null });
+    set({ projects: next, busy: false });
   },
 
   async openProject(id) {
@@ -352,6 +354,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
 
     try {
       const data = record.data;
+      const emptySnapshot = data === null || isEmptySnapshot(data);
       const needsCapture = Boolean(
         data?.capture ?? record.meta.meta.fileName,
       );
@@ -360,25 +363,32 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       // сессии, сообщения и флаги загрузки предыдущего.
       useAppStore.getState().resetProject();
 
-      if (needsCapture) {
+      // Данные запрашиваются заново, если снимок пуст или отсутствует
+      // (проект создан, но бэкенд ещё не вернул данные), либо если снимок
+      // привязан к записи, но её нет в сервисе. Иначе восстанавливаемся
+      // из снимка — без обращения к бэкенду.
+      if (emptySnapshot || needsCapture) {
         await useAppStore.getState().loadProject();
 
-        // Запись проекта может не найтись в сервисе (например, после
-        // переноса на другую машину) — тогда остаётся первая запись.
-        const state = useAppStore.getState();
-        const wanted = data?.capture?.id;
-        const target = wanted
-          ? state.captures.find((item) => item.id === wanted)
-          : record.meta.meta.fileName
-            ? state.captures.find(
-                (item) => item.fileName === record.meta.meta.fileName,
-              )
-            : undefined;
-        if (target && state.activeCaptureId !== target.id) {
-          await useAppStore.getState().selectCapture(target.id);
+        if (needsCapture) {
+          // Запись проекта может не найтись в сервисе (например, после
+          // переноса на другую машину) — тогда остаётся первая запись.
+          const state = useAppStore.getState();
+          const wanted = data?.capture?.id;
+          const target = wanted
+            ? state.captures.find((item) => item.id === wanted)
+            : record.meta.meta.fileName
+              ? state.captures.find(
+                  (item) => item.fileName === record.meta.meta.fileName,
+                )
+              : undefined;
+          if (target && state.activeCaptureId !== target.id) {
+            await useAppStore.getState().selectCapture(target.id);
+          }
         }
       } else {
-        // Пустой проект: записи нет, модели нужны — они в снимке.
+        // Снимок с данными, но без привязки к записи: данные берутся из
+        // снимка, повторный запрос к бэкенду не нужен.
         await useAppStore.getState().loadModels();
       }
 

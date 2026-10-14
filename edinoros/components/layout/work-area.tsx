@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CheckPanel } from "@/components/check/check-panel";
 import { EmptyHint } from "@/components/empty-hint";
@@ -59,6 +59,14 @@ export function WorkArea() {
   const loadingObservations = useAppStore(
     (state) => state.loading.observations,
   );
+
+  const appError = useAppStore((state) => state.error);
+  const loadProject = useAppStore((state) => state.loadProject);
+  /**
+   * Текст скрытой ошибки, а не булев флаг: при повторной загрузке ошибка
+   * та же — баннер не показываем, при новой (другой текст) — показываем.
+   */
+  const [hiddenError, setHiddenError] = useState<string | null>(null);
 
   const selection = useAppStore((state) => state.selection);
   const hoveredFieldId = useAppStore((state) => state.hoveredFieldId);
@@ -204,6 +212,43 @@ export function WorkArea() {
     return apply.uncovered.length > 0 ? apply.uncovered : null;
   }, [compareActive, fieldsSource, message, bytes, messageModel]);
 
+  // Сбрасываем скрытие при каждой новой попытке загрузки проекта (rising
+  // edge loading.captures): после [Скрыть] и повторного открытия проекта
+  // ошибка та же, но баннер должен появиться снова. Локальный флаг живёт
+  // только в рамках одного attempt.
+  const prevLoadingCaptures = useRef(loadingCaptures);
+  useEffect(() => {
+    if (loadingCaptures && !prevLoadingCaptures.current) {
+      setHiddenError(null);
+    }
+    prevLoadingCaptures.current = loadingCaptures;
+  }, [loadingCaptures]);
+
+  // Новая ошибка (другой текст, другой метод, другой тип) — показываем
+  // баннер, даже если предыдущая была скрыта.
+  useEffect(() => {
+    setHiddenError(null);
+  }, [appError]);
+
+  /**
+   * Читаемое сообщение из текста ошибки. HttpServiceError уже несёт
+   * понятный текст (routeMissing / HTTP-статус / сеть / таймаут) —
+   * здесь только смягчаем формулировку для пользователя.
+   */
+  const appErrorText = useMemo(() => {
+    if (!appError) return null;
+    if (appError.includes("не реализован на бэке")) {
+      return appError.replace(
+        "не реализован на бэке",
+        "ещё не реализован на бэке — данные недоступны",
+      );
+    }
+    if (appError.includes("Нет связи с бэкендом")) {
+      return `${appError}. Проверьте, что бэкенд запущен.`;
+    }
+    return appError;
+  }, [appError]);
+
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
       {importPhase === "running" ? (
@@ -247,6 +292,30 @@ export function WorkArea() {
             variant="ghost"
             className="ml-auto"
             onClick={() => setImportDoneNotice(false)}
+          >
+            Скрыть
+          </Button>
+        </div>
+      ) : null}
+
+      {appErrorText && hiddenError !== appErrorText ? (
+        <div className="flex shrink-0 items-center gap-3 border-b border-destructive/40 bg-destructive/5 px-4 py-2">
+          <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+          <span className="min-w-0 flex-1 text-xs text-destructive">
+            {appErrorText}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void loadProject()}
+          >
+            Повторить
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => setHiddenError(appErrorText)}
           >
             Скрыть
           </Button>

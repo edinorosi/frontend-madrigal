@@ -4,15 +4,15 @@
 
 Локальный инструмент для исследования недокументированного бинарного обмена с устройством поверх TCP. Инженер открывает запись PCAP, сопоставляет её с журналом действий, формулирует гипотезы о структуре сообщений и проверяет их на новых данных. Результат должен быть привязан к исходным байтам и воспроизводиться после передачи проекта другому инженеру.
 
-Это репозиторий **фронтенда**: Next.js, App Router, статический экспорт. Бэкенд — отдельный проект, его делают параллельно другие люди. Пока бэка нет, фронт работает на моках: `mockService` реализует ровно тот интерфейс, который предстоит реализовать бэкенду.
+Это репозиторий **фронтенда**: Next.js, App Router, статический экспорт. Бэкенд — отдельный репозиторий `backend-madrigal` (Rust, Axum, :8080), его делают параллельно другие люди. Пока роуты бэка не совпадают с `AppService`, фронт работает на моках: `mockService` реализует ровно тот интерфейс, который предстоит реализовать бэкенду. Переключение на HTTP — через `NEXT_PUBLIC_API_URL` (см. §3, «Интеграция с бэкендом»).
 
 Целевая среда сейчас — браузер (`npm run dev`). Сборка под Tauri планируется позже; `output: 'export'` в `next.config.ts` держится под неё и ломать его нельзя.
 
 ## 2. Кто что делает
 
-**Фронт:** весь UI и раскладка, интерфейс `AppService`, `mockService`, мок-данные, HEX-дамп, мини-карта, ReferenceChip, панель интерпретации, состояния, горячие клавиши.
+**Фронт:** весь UI и раскладка, интерфейс `AppService`, `mockService` + `httpService`, мок-данные, HEX-дамп, мини-карта, ReferenceChip, панель интерпретации, состояния, горячие клавиши.
 
-**Бэк:** парсинг PCAP/PCAPNG, реконструкция TCP-потока, фрейминг, применение модели разбора, проверка на корпусе, хранение проекта на диске, работа с файлами.
+**Бэк:** парсинг PCAP/PCAPNG, реконструкция TCP-потока, фрейминг, применение модели разбора, проверка на корпусе, хранение проекта на диске, работа с файлами. Бэкенд — Rust, отдельный репозиторий `backend-madrigal`. Фронт не пишет код на Rust и не трогает этот репозиторий; стыковка — HTTP (`httpService` + роуты из §3).
 
 Границы жёсткие. Всё из списка бэка фронт не делает. Если увидишь такое в фронтовом коде — это ошибка.
 
@@ -47,13 +47,70 @@
 
 ### Точка подмены
 
-`src/services/index.ts`:
+`src/services/index.ts` выбирает реализацию `AppService` по `NEXT_PUBLIC_API_URL`:
 
 ```ts
-export const appService: AppService = mockService;
+export const appService: AppService = process.env.NEXT_PUBLIC_API_URL
+  ? httpService   // бэкенд backend-madrigal, Axum, :8080
+  : mockService;  // оффлайн-разработка на моках
 ```
 
-Это единственная строка, которая меняется при подключении бэка. Остальное приложение работает через `appService` и о моках не знает.
+Это единственное место, которое меняется при подключении бэка. Остальное приложение работает через `appService` и о моках/HTTP не знает.
+
+### Интеграция с бэкендом (HTTP)
+
+Бэкенд — отдельный репозиторий `backend-madrigal` (Rust, cargo-workspace `core` + `api`, Axum). Не переносить в `src-tauri/`. Сейчас — HTTP, Tauri (sidecar) — позже.
+
+**Запуск в dev (два терминала):**
+
+```bash
+# терминал 1 — бэкенд (из backend-madrigal)
+cargo run -p protocol-lab-api          # слушает http://localhost:8080
+
+# терминал 2 — фронтенд (из edinoros)
+NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev
+```
+
+Без `NEXT_PUBLIC_API_URL` фронт работает на моках (оффлайн). Заданная переменная переключает все методы `AppService` на HTTP к `:8080`.
+
+`src/services/httpService.ts` — вторая реализация `AppService` через `fetch`. HTTP-слой (`requestJson`) уже готов: таймаут 15 с, разбор ошибок 4xx/5xx, `HttpServiceError` с понятным сообщением (его ловит `describeError` в сторе). Пока **ни один** из 14 методов не подключён по-настоящему: форматы роутов бэка не совпадают с `domain.ts` — каждый метод кидает `routeMissing(method, expectedRoute)`. Когда бэк добавит роуты — заменить `routeMissing` на `requestJson<T>(...)`.
+
+### Ошибки в workspace
+
+Ошибки загрузки проекта (например, `loadProject` → `listCaptures` → «HTTP: метод ещё не реализован на бэке») показываются **баннером в верхней части рабочей области** (`components/layout/work-area.tsx`, под `importDoneNotice`). Раньше ошибка гасла в пустом центре с текстом «Проект пуст» — её больше так не прячем.
+
+Как устроено:
+- Текст берётся из `state.error` (заполняется `describeError` в сторе).
+- Подпись для `routeMissing` перефразируется («ещё не реализован на бэке — данные недоступны»), для «Нет связи с бэкендом» добавляется подсказка «Проверьте, что бэкенд запущен».
+- **[Повторить]** — повторяет `loadProject()` (стор).
+- **[Скрыть]** — локальное состояние в `work-area.tsx`; при новом изменении `state.error` баннер появляется снова. Стор и `app.error` не трогаем.
+
+Типы ошибок, которые сюда попадают: HTTP-ошибки (`HttpServiceError` с кодом ответа), сетевые ошибки и таймауты (`requestJson`), «метод не реализован» (`routeMissing`). Моки (`mockService`) сюда не приходят — в них ошибок загрузки нет.
+
+### Роуты, которые нужны на бэке (артефакт для бэкенд-разработчика)
+
+Форматы — по `src/types/domain.ts`. Пока ни один не реализован.
+
+| Метод AppService | Нужный роут | Request | Response |
+|---|---|---|---|
+| `listCaptures()` | `GET /api/v1/captures` | — | `Capture[]` |
+| `importCapture(file)` | `POST /api/v1/captures` | multipart `file` | `Capture` |
+| `listSessions(captureId)` | `GET /api/v1/captures/:captureId/sessions` | — | `Session[]` |
+| `listMessages(sessionId, direction?)` | `GET /api/v1/sessions/:sessionId/messages` | query `direction?` = `request`\|`response` | `Message[]` (обе стороны одним потоком, по времени; с `direction` — фильтр) |
+| `getBytes(captureId, offset, length)` | `GET /api/v1/captures/:captureId/bytes` | query `offset`, `length` | `application/octet-stream` (сырые байты; offset от начала потока записи) |
+| `saveObservation(obs)` | `PUT /api/v1/observations` | тело `Observation` | 204; upsert по `id` |
+| `removeObservation(id)` | `DELETE /api/v1/observations/:id` | — | 204 |
+| `listObservations(messageId)` | `GET /api/v1/messages/:messageId/observations` | — | `Observation[]` |
+| `listActions(captureId)` | `GET /api/v1/captures/:captureId/actions` | — | `Action[]` |
+| `checkModel(captureId, modelId?)` | `POST /api/v1/check` | `{ captureId, modelId? }` | `CheckResult` (rows + summary) |
+| `listModels()` | `GET /api/v1/models` | — | `Model[]` |
+| `saveModel(model)` | `PUT /api/v1/models` | тело `Model` | 204; upsert по `id` |
+| `removeModel(modelId)` | `DELETE /api/v1/models/:modelId` | — | 204 |
+| `applyModel(messageId, modelId)` | `POST /api/v1/messages/:messageId/apply-model` | `{ modelId }` | `MessageField[]` |
+
+Обязательные поля по типам: `Capture.id/fileName/importedAt/sizeBytes/sessionCount`, `Session.id/captureId/tuple/messageCount/startedAt`, `Message.id/sessionId/packetNumber/byteOffset/direction/role/length/status/label/timestamp/interpretation/verified/fields[]`, `MessageField.id/name/type/value/range`, `Observation.id/messageId/kind/createdAt`, `Model.id/name/status/rules[]`, `CheckResult.rows[]/summary{total,ok,partial,unknown,error}`.
+
+Семантика (обязательна для бэка): `listMessages` без `direction` — обе стороны одним потоком, упорядоченным по времени; `getBytes.offset` — отсчёт от начала байтового потока записи (не от сообщения); `saveObservation`/`saveModel` — upsert по `id`.
 
 ### Типы — единственный источник правды
 
@@ -96,15 +153,25 @@ export const appService: AppService = mockService;
 ## 6. Как запускать
 
 ```bash
-npm run dev          # веб-версия, http://localhost:3000
+npm run dev          # веб-версия, http://localhost:3000 (моки, оффлайн)
 npm run build        # статический экспорт в out/
 npm run lint         # ESLint — сейчас может не работать, см. ниже
 npx tsc --noEmit     # проверка типов
 ```
 
+С бэкендом (два терминала, см. §3 «Интеграция с бэкендом»):
+
+```bash
+# бэкенд (из ../backend-madrigal)
+cargo run -p protocol-lab-api
+
+# фронтенд (из edinoros)
+NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev
+```
+
 > `npm run lint` временно недоступен: конфиг ESLint (`eslint.config.mjs`) удалён коммитом коллеги, работа над ним идёт. Скрипт и зависимости на месте — команду не удалять. Понадобился линт — спросите пользователя; восстанавливать конфиг самостоятельно нельзя.
 
-Tauri — позже, не сейчас.
+Tauri — позже, не сейчас. План: бинарь `protocol-lab-api` запускается как sidecar, фронт ходит на `http://127.0.0.1:8080` — транспорт тот же HTTP (`httpService`), IPC Tauri-commands не нужен. `output: 'export'` в `next.config.ts` держится под Tauri и ломать его нельзя.
 
 ## 7. Кроссплатформенность
 

@@ -105,89 +105,138 @@ export async function requestJson<T>(
   }
 }
 
-/**
- * Метод AppService, для которого на бэке ещё нет роута в формате domain.ts.
- * expectedRoute — путь, который ждёт фронт (артефакт для бэкенд-разработчика).
- * Когда роут появится — заменить routeMissing на requestJson<T>(...).
- */
-function routeMissing(method: string, expectedRoute: string): never {
-  throw new HttpServiceError(
-    `HTTP: метод ${method} не реализован на бэке — нужен ${expectedRoute}`,
-  );
+async function requestBytes(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<Uint8Array> {
+  const baseUrl = requireBaseUrl();
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = init ?? {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...rest,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new HttpServiceError(
+        `Бэкенд не ответил за ${timeoutMs} мс (${baseUrl})`,
+      );
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new HttpServiceError(`Нет связи с бэкендом ${baseUrl}: ${detail}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    throw new HttpServiceError(
+      `Бэкенд вернул ${response.status} ${response.statusText}`,
+      response.status,
+    );
+  }
+
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 export const httpService: AppService = {
   async listCaptures() {
-    routeMissing("listCaptures", "GET /api/v1/captures");
+    return requestJson<Capture[]>(`/api/v1/captures`);
   },
 
-  async importCapture(_file: File) {
-    routeMissing("importCapture", "POST /api/v1/captures (multipart file)");
+  async importCapture(file: File) {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return requestJson<Capture>(`/api/v1/captures`, {
+      method: "POST",
+      body: form,
+    });
   },
 
-  async listSessions(_captureId: string) {
-    routeMissing("listSessions", "GET /api/v1/captures/:captureId/sessions");
-  },
-
-  async listMessages(_sessionId: string, _direction?: Direction) {
-    routeMissing(
-      "listMessages",
-      "GET /api/v1/sessions/:sessionId/messages?direction=...",
+  async listSessions(captureId: string) {
+    return requestJson<Session[]>(
+      `/api/v1/captures/${encodeURIComponent(captureId)}/sessions`,
     );
   },
 
-  async getBytes(_captureId: string, _offset: number, _length: number) {
-    routeMissing(
-      "getBytes",
-      "GET /api/v1/captures/:captureId/bytes?offset=&length= (application/octet-stream)",
+  async listMessages(sessionId: string, direction?: Direction) {
+    const q = direction ? `?direction=${encodeURIComponent(direction)}` : "";
+    return requestJson<Message[]>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages${q}`,
     );
   },
 
-  async saveObservation(_obs: Observation) {
-    routeMissing(
-      "saveObservation",
-      "PUT /api/v1/observations (upsert по id, тело — Observation)",
+  async getBytes(captureId: string, offset: number, length: number) {
+    return requestBytes(
+      `/api/v1/captures/${encodeURIComponent(captureId)}/bytes?offset=${offset}&length=${length}`,
     );
   },
 
-  async removeObservation(_id: string) {
-    routeMissing("removeObservation", "DELETE /api/v1/observations/:id");
+  async saveObservation(obs: Observation) {
+    await requestJson<void>(`/api/v1/observations`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(obs),
+    });
   },
 
-  async listObservations(_messageId: string) {
-    routeMissing(
-      "listObservations",
-      "GET /api/v1/messages/:messageId/observations",
+  async removeObservation(id: string) {
+    await requestJson<void>(
+      `/api/v1/observations/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
     );
   },
 
-  async listActions(_captureId: string) {
-    routeMissing("listActions", "GET /api/v1/captures/:captureId/actions");
+  async listObservations(messageId: string) {
+    return requestJson<Observation[]>(
+      `/api/v1/messages/${encodeURIComponent(messageId)}/observations`,
+    );
   },
 
-  async checkModel(_captureId: string, _modelId?: string) {
-    routeMissing(
-      "checkModel",
-      "POST /api/v1/check (тело {captureId, modelId?}, ответ CheckResult)",
+  async listActions(captureId: string) {
+    return requestJson<Action[]>(
+      `/api/v1/captures/${encodeURIComponent(captureId)}/actions`,
     );
+  },
+
+  async checkModel(captureId: string, modelId?: string) {
+    return requestJson<CheckResult>(`/api/v1/check`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ capture_id: captureId, model_id: modelId ?? null }),
+    });
   },
 
   async listModels() {
-    routeMissing("listModels", "GET /api/v1/models");
+    return requestJson<Model[]>(`/api/v1/models`);
   },
 
-  async saveModel(_model: Model) {
-    routeMissing("saveModel", "PUT /api/v1/models (upsert по id, тело — Model)");
+  async saveModel(model: Model) {
+    await requestJson<void>(`/api/v1/models`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(model),
+    });
   },
 
-  async removeModel(_modelId: string) {
-    routeMissing("removeModel", "DELETE /api/v1/models/:id");
+  async removeModel(modelId: string) {
+    await requestJson<void>(
+      `/api/v1/models/${encodeURIComponent(modelId)}`,
+      { method: "DELETE" },
+    );
   },
 
-  async applyModel(_messageId: string, _modelId: string) {
-    routeMissing(
-      "applyModel",
-      "POST /api/v1/messages/:messageId/apply-model (тело {modelId}, ответ MessageField[])",
+  async applyModel(messageId: string, modelId: string) {
+    return requestJson<MessageField[]>(
+      `/api/v1/messages/${encodeURIComponent(messageId)}/apply-model`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ modelId }),
+      },
     );
   },
 };

@@ -27,6 +27,8 @@ build/
 .nuxt/
 out/
 .docusaurus/
+edinoros/src-tauri/target/
+edinoros/src-tauri/binaries/
 
 # Кэш инструментов разработки
 .eslintcache

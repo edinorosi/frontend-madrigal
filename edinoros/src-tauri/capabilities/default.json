@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Базовые возможности: окно открывается, сеть ходит обычным fetch (sidecar бека на localhost).",
+  "windows": ["main"],
+  "permissions": ["core:default", "mcp-bridge:default"]
+}

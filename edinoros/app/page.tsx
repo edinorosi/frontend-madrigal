@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import dynamic from "next/dynamic";
 import { SidebarPanel } from "@/components/layout/sidebar-panel";
 import { Statusbar } from "@/components/layout/statusbar";
 import { Topbar } from "@/components/layout/topbar";
@@ -14,18 +13,6 @@ import { ProjectsScreen } from "@/components/projects/projects-screen";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/src/store/app";
 import { useProjectsStore } from "@/src/store/projects";
-
-/**
- * Тестовое меню подключается только в dev-сборке и отдельным чанком:
- * в production-сборке ветка статически ложна, поэтому код пульта
- * в бандл не попадает и связаться с бэкендом не мешает.
- */
-const DevMenu =
-  process.env.NODE_ENV !== "production"
-    ? dynamic(() =>
-        import("@/components/dev/dev-menu").then((module) => module.DevMenu),
-      )
-    : () => null;
 
 const CAPTURE_EXT = [".pcap", ".pcapng", ".cap"];
 
@@ -121,7 +108,6 @@ export default function Page() {
           <InferDialog />
         </>
       )}
-      <DevMenu />
 
       {dragOver ? (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/60">

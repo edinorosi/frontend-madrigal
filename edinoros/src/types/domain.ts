@@ -233,6 +233,8 @@ export interface ModelRule {
     lengthEquals?: number;
     /** Сообщение не длиннее N байт — короткий или оборванный кадр. */
     maxMessageLength?: number;
+    /** Точная длина сообщения в байтах — различает правила с одним опкодом. */
+    messageLength?: number;
   };
   fields: ModelField[];
 }

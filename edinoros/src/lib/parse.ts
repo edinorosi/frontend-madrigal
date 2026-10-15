@@ -51,6 +51,10 @@ function ruleMatches(bytes: Uint8Array, condition: ModelRule["condition"]): bool
     return false;
   }
 
+  if (condition.messageLength !== undefined && bytes.length !== condition.messageLength) {
+    return false;
+  }
+
   if (condition.opcode !== undefined || condition.opcodes !== undefined) {
     const opcode = readOpcode(bytes);
     if (opcode === null) return false;

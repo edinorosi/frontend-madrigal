@@ -20,6 +20,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createId } from "@/src/lib/ids";
+import { MODEL_HELP } from "@/src/lib/model-help";
 import { applyModelToBytes } from "@/src/lib/parse";
 import { useAppStore } from "@/src/store/app";
 import type {
@@ -670,6 +671,7 @@ export function RuleForm({
                         )
                       }
                       placeholder="имя"
+                      title={MODEL_HELP.fieldName}
                       className="h-7 w-24 text-xs"
                     />
                     <Select
@@ -683,7 +685,7 @@ export function RuleForm({
                       }
                       onOpenChange={setOverlayOpen}
                     >
-                      <SelectTrigger size="sm" className="w-28 text-xs">
+                      <SelectTrigger size="sm" className="w-28 text-xs" title={MODEL_HELP.fieldType}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -711,7 +713,15 @@ export function RuleForm({
                       }
                       onOpenChange={setOverlayOpen}
                     >
-                      <SelectTrigger size="sm" className="w-20 text-xs">
+                      <SelectTrigger
+                        size="sm"
+                        className="w-20 text-xs"
+                        title={
+                          field.offsetMode === "end-2"
+                            ? MODEL_HELP.fieldOffsetEnd2
+                            : MODEL_HELP.fieldOffset
+                        }
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -732,6 +742,7 @@ export function RuleForm({
                           )
                         }
                         placeholder="0"
+                        title={MODEL_HELP.fieldOffset}
                         className="h-7 w-16 font-mono text-xs"
                       />
                     ) : null}
@@ -752,7 +763,15 @@ export function RuleForm({
                       }
                       onOpenChange={setOverlayOpen}
                     >
-                      <SelectTrigger size="sm" className="w-22 text-xs">
+                      <SelectTrigger
+                        size="sm"
+                        className="w-22 text-xs"
+                        title={
+                          field.lengthMode === "number"
+                            ? MODEL_HELP.fieldLength
+                            : MODEL_HELP.fieldLengthRest
+                        }
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -774,6 +793,7 @@ export function RuleForm({
                           )
                         }
                         placeholder="1"
+                        title={MODEL_HELP.fieldLength}
                         className="h-7 w-16 font-mono text-xs"
                       />
                     ) : null}
@@ -807,6 +827,7 @@ export function RuleForm({
                         )
                       }
                       placeholder="note (необязательно)"
+                      title={MODEL_HELP.fieldNote}
                       className="h-7 flex-1 text-xs"
                     />
                   </div>

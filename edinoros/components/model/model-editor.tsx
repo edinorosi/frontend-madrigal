@@ -13,6 +13,7 @@ import {
   Play,
   Plus,
   Radar,
+  CircleHelp,
   Sparkles,
   Trash2,
   Upload,
@@ -49,6 +50,7 @@ import {
 import { useAppStore } from "@/src/store/app";
 import type { Model, ModelRule, ModelStatus } from "@/src/types/domain";
 import { RuleForm } from "@/components/model/rule-form";
+import { ModelGuideDialog } from "@/components/model/model-guide-dialog";
 import { CompareModelsDialog } from "@/components/model/compare-models-dialog";
 
 function formatOpcode(value: number): string {
@@ -65,6 +67,9 @@ function describeCondition(condition: ModelRule["condition"]): string {
   }
   if (condition.lengthEquals !== undefined) {
     parts.push(`length = ${condition.lengthEquals}`);
+  }
+  if (condition.messageLength !== undefined) {
+    parts.push(`длина сообщения = ${condition.messageLength} Б`);
   }
   if (condition.maxMessageLength !== undefined) {
     parts.push(`длина ≤ ${condition.maxMessageLength} Б`);
@@ -153,6 +158,7 @@ export function ModelEditor() {
   const [renamingModelId, setRenamingModelId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
   const [compareOpen, setCompareOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const activeModel = useMemo(
@@ -980,6 +986,17 @@ export function ModelEditor() {
         onConfirm={() => void confirmPendingDelete()}
         onCancel={() => setPendingDelete(null)}
       />
+
+      <Button
+        variant="outline"
+        size="icon"
+        className="absolute right-4 bottom-4 z-10 size-9 rounded-full shadow-md"
+        title="Как устроены модели"
+        onClick={() => setGuideOpen(true)}
+      >
+        <CircleHelp className="size-4" />
+      </Button>
+      <ModelGuideDialog open={guideOpen} onClose={() => setGuideOpen(false)} />
 
       {activeModel ? (
         <CompareModelsDialog

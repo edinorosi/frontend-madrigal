@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npm run dev",
-    "beforeBuildCommand": "NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npm run build"
+    "beforeDevCommand": "cross-env NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npm run dev",
+    "beforeBuildCommand": "cross-env NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npm run build"
   },
   "app": {
     "withGlobalTauri": true,

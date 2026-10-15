@@ -1,0 +1,47 @@
+# Все пути — относительно этой папки (frontend-madrigal/edinoros/).
+# Репо клонируются соседними папками: ../../backend-madrigal и эта (фронт).
+
+services:
+  backend:
+    build: ../../backend-madrigal
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../backend-madrigal/data:/app/data
+      - ../../backend-madrigal/uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Только для сборки Linux-инсталлятора Tauri через Linux-контейнер.
+  # Не стартует при обычном `docker compose up`.
+  tauri-build:
+    profiles: ["tauri-build"]
+    build:
+      context: .
+      dockerfile: Dockerfile.tauri-build
+    volumes:
+      - ../../backend-madrigal:/workspace/backend
+      - .:/workspace/frontend
+      - cargo-cache:/root/.cargo
+      - node-cache:/workspace/frontend/node_modules
+    working_dir: /workspace/frontend
+    command: bash /workspace/frontend/build-tauri.sh
+
+volumes:
+  cargo-cache:
+  node-cache:

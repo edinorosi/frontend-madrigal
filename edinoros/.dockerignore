@@ -1,13 +1,13 @@
-# Не тащим в контекст сборки локальные артефакты и Tauri
+# Не тащим в контекст сборки локальные артефакты.
+# src-tauri/ НЕ игнорируем целиком — он нужен для Linux Tauri build;
+# игнорируем только тяжёлые подпапки.
 node_modules/
 .next/
 out/
+src-tauri/target/
+src-tauri/binaries/
 .git/
-.gitignore
-src-tauri/
+**/*.log
 tsconfig.tsbuildinfo
-*.log
 .env
 .env.*
-Dockerfile
-.dockerignore

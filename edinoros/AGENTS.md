@@ -171,16 +171,19 @@ NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev
 
 > `npm run lint` временно недоступен: конфиг ESLint (`eslint.config.mjs`) удалён коммитом коллеги, работа над ним идёт. Скрипт и зависимости на месте — команду не удалять. Понадобился линт — спросите пользователя; восстанавливать конфиг самостоятельно нельзя.
 
-### Docker (рекомендуется на обеих ОС)
+### Docker (веб-версия и Linux Tauri build)
 
-Docker — предпочтительный способ запуска всего стека: одинаково на Windows и Linux, Rust/MSVC на хосте не нужны. Подробности и команды — в `README-DOCKER.md` в корне `madrigal/` (рядом с двумя репозиториями).
+Весь Docker-стек лежит в `frontend-madrigal/edinoros/` и запускается из неё — та же точка входа, что у Tauri. Подробности — в `README-DOCKER.md` (рядом с `docker-compose.yml`). Бэк поднимается образом из соседнего репо `../../backend-madrigal`.
 
 ```bash
-# из корня madrigal/ (где лежат backend-madrigal/ и frontend-madrigal/)
-docker compose up --build    # бэкенд :8080 + фронтенд :3000
+# из frontend-madrigal/edinoros/
+docker compose up -d                          # веб-версия: :8080 (бэк) + :3000 (фронт)
+docker compose --profile tauri-build up tauri-build   # Linux Tauri installer (.deb/.AppImage)
 ```
 
-`NEXT_PUBLIC_API_URL` в Docker собирается как build-arg (`http://localhost:8080`) — браузер ходит к бэку напрямую через опубликованный порт. Существующие способы запуска (`cargo run`, `npm run dev`) остаются; Docker — дополнительно.
+Артефакты Tauri build попадают на хост в `src-tauri/target/release/bundle/`. Linux x86-64 — целевая ОС; Windows/macOS installer из Docker не собираются (это не кросс-компилируется).
+
+`npx tauri dev` — **на Linux напрямую, не в Docker** (GUI-приложение; веб-версию в контейнере это не заменяет). `cargo run`/`npm run dev` остаются; Docker — дополнительно.
 
 Tauri — позже, не сейчас. План: бинарь `protocol-lab-api` запускается как sidecar, фронт ходит на `http://127.0.0.1:8080` — транспорт тот же HTTP (`httpService`), IPC Tauri-commands не нужен. `output: 'export'` в `next.config.ts` держится под Tauri и ломать его нельзя.
 

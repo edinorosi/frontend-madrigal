@@ -1,0 +1,33 @@
+# Сборка Linux Tauri-инсталлятора (.deb/.AppImage) в Linux-контейнере.
+# Запуск: docker compose --profile tauri-build up tauri-build (из этой папки).
+# Код монтируется volume'ами (см. docker-compose.yml), здесь — только тулчейн.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Зависимости Tauri v2 на Linux (webkit2gtk-4.1) + toolchain.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget file build-essential pkg-config \
+    libwebkit2gtk-4.1-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    libxdo-dev \
+    libssl-dev \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust (stable).
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Node.js 20.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# tauri-cli не ставим отдельно: @tauri-apps/cli есть в devDependencies фронта,
+# после npm ci подхватится через npx.
+
+WORKDIR /workspace/frontend

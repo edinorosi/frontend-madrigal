@@ -1,0 +1,13 @@
+# Не тащим в контекст сборки локальные артефакты и Tauri
+node_modules/
+.next/
+out/
+.git/
+.gitignore
+src-tauri/
+tsconfig.tsbuildinfo
+*.log
+.env
+.env.*
+Dockerfile
+.dockerignore

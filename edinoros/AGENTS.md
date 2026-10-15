@@ -171,6 +171,17 @@ NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev
 
 > `npm run lint` временно недоступен: конфиг ESLint (`eslint.config.mjs`) удалён коммитом коллеги, работа над ним идёт. Скрипт и зависимости на месте — команду не удалять. Понадобился линт — спросите пользователя; восстанавливать конфиг самостоятельно нельзя.
 
+### Docker (рекомендуется на обеих ОС)
+
+Docker — предпочтительный способ запуска всего стека: одинаково на Windows и Linux, Rust/MSVC на хосте не нужны. Подробности и команды — в `README-DOCKER.md` в корне `madrigal/` (рядом с двумя репозиториями).
+
+```bash
+# из корня madrigal/ (где лежат backend-madrigal/ и frontend-madrigal/)
+docker compose up --build    # бэкенд :8080 + фронтенд :3000
+```
+
+`NEXT_PUBLIC_API_URL` в Docker собирается как build-arg (`http://localhost:8080`) — браузер ходит к бэку напрямую через опубликованный порт. Существующие способы запуска (`cargo run`, `npm run dev`) остаются; Docker — дополнительно.
+
 Tauri — позже, не сейчас. План: бинарь `protocol-lab-api` запускается как sidecar, фронт ходит на `http://127.0.0.1:8080` — транспорт тот же HTTP (`httpService`), IPC Tauri-commands не нужен. `output: 'export'` в `next.config.ts` держится под Tauri и ломать его нельзя.
 
 ## 7. Кроссплатформенность

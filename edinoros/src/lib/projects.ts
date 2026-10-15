@@ -207,6 +207,7 @@ export function emptyProjectData(): ProjectExportFile {
       author: null,
     },
     capture: null,
+    captures: [],
     active: {
       modelId: null,
       sessionId: null,
@@ -229,7 +230,14 @@ export function emptyProjectData(): ProjectExportFile {
 export function isEmptySnapshot(data: ProjectExportFile): boolean {
   return (
     data.capture === null &&
+    (data.captures ?? []).length === 0 &&
     data.models.length === 0 &&
     data.observations.length === 0
   );
+}
+
+/** Записи снимка: новый список, иначе одиночная запись (старые файлы). */
+export function snapshotCaptureIds(data: ProjectExportFile): string[] {
+  if (data.captures) return data.captures.map((item) => item.id);
+  return data.capture ? [data.capture.id] : [];
 }

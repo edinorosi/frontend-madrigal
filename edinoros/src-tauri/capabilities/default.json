@@ -2,5 +2,15 @@
   "identifier": "default",
   "description": "Базовые возможности: окно открывается, сеть ходит обычным fetch (sidecar бека на localhost).",
   "windows": ["main"],
-  "permissions": ["core:default", "mcp-bridge:default"]
+  "permissions": [
+    "core:default",
+    "mcp-bridge:default",
+    "dialog:allow-save",
+    "fs:allow-write-text-file",
+    "fs:allow-write-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$DOWNLOAD/**" }]
+    }
+  ]
 }

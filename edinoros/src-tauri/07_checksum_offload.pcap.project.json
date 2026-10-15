@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "metadata": {
+    "exportedAt": "2026-10-15T14:06:29.964Z",
+    "author": null
+  },
+  "capture": {
+    "id": "634bbfe1-8ab8-44e3-97a3-54eb1ea74083",
+    "fileName": "07_checksum_offload.pcap",
+    "importedAt": "2026-10-15T13:01:15.652683521+00:00",
+    "sizeBytes": 4167,
+    "sessionCount": 1
+  },
+  "active": {
+    "modelId": null,
+    "sessionId": "2694120c-e143-40b6-9273-ef7ad8a17707",
+    "messageId": null,
+    "fieldsSource": "json",
+    "messageModels": {}
+  },
+  "models": [],
+  "observations": [
+    {
+      "id": "obs-44be2101-6baa-4ecc-b7f2-bd90de7a52e8",
+      "messageId": "8f842ab1-e5ba-4684-9f55-9e8210d47344",
+      "kind": "hypothesis",
+      "text": "123",
+      "range": {
+        "offset": 5,
+        "length": 15
+      },
+      "status": "confirmed",
+      "ruleId": "rule-0bfaf5ea-7aba-4556-bde6-43598eddb1ce",
+      "createdAt": "2026-10-15T13:26:53.046Z"
+    }
+  ],
+  "checkResult": null
+}

@@ -5,7 +5,12 @@
  * версия схемы, валидация с русскими сообщениями, при импорте id
  * генерируется заново — правило никогда не перезаписывает существующие.
  */
-import { MODEL_SCHEMA_VERSION, parseJsonObject, parseRule } from "./model-export";
+import {
+  MODEL_SCHEMA_VERSION,
+  ImportFileError,
+  parseJsonObject,
+  parseRule,
+} from "./model-export";
 import { safeFileName } from "./download";
 import type { ModelRule } from "@/src/types/domain";
 
@@ -45,18 +50,32 @@ export function buildRuleExport(
 export function parseRuleExport(raw: string): ModelRule {
   const file = parseJsonObject(raw, "файл правила");
 
+  if (!("schemaVersion" in file)) {
+    throw new ImportFileError("файл правила: отсутствует поле schemaVersion");
+  }
   if (file.schemaVersion !== MODEL_SCHEMA_VERSION) {
     const found =
       typeof file.schemaVersion === "string"
         ? `"${file.schemaVersion}"`
         : String(file.schemaVersion);
-    throw new Error(
-      `Несовместимая версия схемы: ${found} (ожидается ${MODEL_SCHEMA_VERSION})`,
+    throw new ImportFileError(
+      `файл правила: несовместимая версия схемы: ${found} (ожидается ${MODEL_SCHEMA_VERSION})`,
     );
   }
 
-  if (file.rule === undefined) {
-    throw new Error("в файле нет объекта rule");
+  if ("model" in file && !("rule" in file)) {
+    throw new ImportFileError(
+      "файл правила: похоже, это файл модели. Используйте «Импорт модели» в меню «Экспорт»",
+      "model-file",
+    );
+  }
+  if (
+    !("rule" in file) ||
+    typeof file.rule !== "object" ||
+    file.rule === null ||
+    Array.isArray(file.rule)
+  ) {
+    throw new ImportFileError("файл правила: в файле нет объекта rule");
   }
   return parseRule(file.rule, 0);
 }

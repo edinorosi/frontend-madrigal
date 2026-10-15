@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "metadata": {
+    "exportedAt": "2026-10-15T07:09:05.791Z",
+    "author": null
+  },
+  "capture": {
+    "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2",
+    "fileName": "01_configuration.pcap",
+    "importedAt": "2026-10-15T06:49:58.355341244+00:00",
+    "sizeBytes": 12207,
+    "sessionCount": 2
+  },
+  "active": {
+    "modelId": "mm",
+    "sessionId": "7dbb9abc-2471-4f41-801a-2e9cea9fc7d6",
+    "messageId": "fc5f62ce-cbb0-44ca-b5e0-4b550821dca2",
+    "fieldsSource": "json",
+    "messageModels": {}
+  },
+  "models": [
+    {
+      "id": "mm",
+      "name": "M",
+      "status": "draft",
+      "rules": [
+        {
+          "id": "r",
+          "name": "R",
+          "condition": {
+            "opcode": 0
+          },
+          "fields": [
+            {
+              "name": "f",
+              "type": "uint8",
+              "offset": 0,
+              "length": 1
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-14T00:00:00Z",
+      "updatedAt": "2026-10-15T07:08:48.625265249+00:00"
+    }
+  ],
+  "observations": [
+    {
+      "id": "o1",
+      "messageId": "fc5f62ce-cbb0-44ca-b5e0-4b550821dca2",
+      "kind": "comment",
+      "createdAt": "2026-10-14T00:00:00Z"
+    }
+  ],
+  "checkResult": {
+    "rows": [
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-001",
+        "actionId": "01-01-001",
+        "time": "10:30:00",
+        "action": "read-config",
+        "expected": null,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-002",
+        "actionId": "01-01-002",
+        "time": "10:30:00",
+        "action": "set-config",
+        "expected": 21,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-003",
+        "actionId": "01-01-003",
+        "time": "10:30:00",
+        "action": "read-values",
+        "expected": 1,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-004",
+        "actionId": "01-01-004",
+        "time": "10:30:00",
+        "action": "set-config",
+        "expected": 19,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-005",
+        "actionId": "01-01-005",
+        "time": "10:30:00",
+        "action": "read-values",
+        "expected": 3,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-006",
+        "actionId": "01-01-006",
+        "time": "10:30:00",
+        "action": "read-config",
+        "expected": null,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-007",
+        "actionId": "01-01-007",
+        "time": "10:30:00",
+        "action": "set-config",
+        "expected": 21,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-008",
+        "actionId": "01-01-008",
+        "time": "10:30:00",
+        "action": "read-values",
+        "expected": 1,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-01-009",
+        "actionId": "01-01-009",
+        "time": "10:30:00",
+        "action": "read-config",
+        "expected": null,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-02-001",
+        "actionId": "01-02-001",
+        "time": "10:30:30",
+        "action": "read-config",
+        "expected": null,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-02-002",
+        "actionId": "01-02-002",
+        "time": "10:30:30",
+        "action": "set-config",
+        "expected": 21,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-02-003",
+        "actionId": "01-02-003",
+        "time": "10:30:30",
+        "action": "read-values",
+        "expected": 2,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-02-004",
+        "actionId": "01-02-004",
+        "time": "10:30:30",
+        "action": "read-config",
+        "expected": null,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      },
+      {
+        "id": "945cfc9f-4679-44e1-82b8-baf1fee610e2:chk-01-02-005",
+        "actionId": "01-02-005",
+        "time": "10:30:30",
+        "action": "read-values",
+        "expected": 4,
+        "extracted": "-",
+        "status": "ok",
+        "messageId": "d8a12b31-0363-44c6-ba04-2c4132e66f36"
+      }
+    ],
+    "summary": {
+      "total": 14,
+      "ok": 14,
+      "partial": 0,
+      "unknown": 0,
+      "error": 0
+    },
+    "modelId": "mm",
+    "modelName": null
+  }
+}

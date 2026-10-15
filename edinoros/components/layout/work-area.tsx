@@ -29,6 +29,7 @@ const DIRECTION_LABEL: Record<Direction, string> = {
 
 const STATUS_LABEL: Record<ParseStatus, string> = {
   parsed: "разобрано",
+  partial: "частично",
   unknown: "неизвестно",
   error: "ошибка разбора",
 };

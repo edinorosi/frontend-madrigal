@@ -69,13 +69,37 @@ const MODEL_STATUSES: ModelStatus[] = ["draft", "checked", "stale"];
 export function parseModelExport(raw: string): Model {
   const file = parseJsonObject(raw, "файл модели");
 
+  if (!("schemaVersion" in file)) {
+    throw new ImportFileError("файл модели: отсутствует поле schemaVersion");
+  }
   if (file.schemaVersion !== MODEL_SCHEMA_VERSION) {
-    throw new Error(
-      `Несовместимая версия схемы: ${describeValue(file.schemaVersion)} (ожидается ${MODEL_SCHEMA_VERSION})`,
+    throw new ImportFileError(
+      `файл модели: несовместимая версия схемы: ${describeValue(file.schemaVersion)} (ожидается ${MODEL_SCHEMA_VERSION})`,
     );
   }
 
-  const model = asRecord(file.model, "в файле нет объекта model");
+  if ("rule" in file && !("model" in file)) {
+    throw new ImportFileError(
+      "файл модели: похоже, это файл правила. Используйте «Импорт правила» в редакторе модели",
+      "rule-file",
+    );
+  }
+  if (
+    !("model" in file) ||
+    typeof file.model !== "object" ||
+    file.model === null ||
+    Array.isArray(file.model)
+  ) {
+    throw new ImportFileError("файл модели: в файле нет объекта model");
+  }
+  const model = file.model as Record<string, unknown>;
+  if (
+    typeof model.id !== "string" ||
+    typeof model.name !== "string" ||
+    !Array.isArray(model.rules)
+  ) {
+    throw new ImportFileError("файл модели: некорректная структура объекта model");
+  }
   const name = requireName(model.name, "у модели нет имени");
 
   const status: ModelStatus = MODEL_STATUSES.includes(
@@ -173,15 +197,51 @@ function parseLength(value: unknown, where: string): ModelField["length"] {
 
 /* ── Общие помощники разбора ──────────────────────────────────────────── */
 
+/**
+ * Ошибка разбора файла импорта с подсказкой о чужом формате:
+ * hint указывает, файл какого типа обнаружен (для кнопки перехода).
+ */
+export class ImportFileError extends Error {
+  readonly hint: "rule-file" | "model-file" | null;
+
+  constructor(message: string, hint: "rule-file" | "model-file" | null = null) {
+    super(message);
+    this.name = "ImportFileError";
+    this.hint = hint;
+  }
+}
+
+/** BOM и пробелы по краям: внешние редакторы добавляют BOM, он ломает JSON.parse. */
+function cleanRawText(raw: string): string {
+  return raw.replace(/^\uFEFF/, "").trim();
+}
+
+/**
+ * Эвристика бинаря после File.text() (UTF-8): NUL-байты и символы-замены
+ * (невалидный UTF-8, напр. PCAP-magic d4 c3 b2 a1) в JSON встречаться не должны.
+ */
+function looksLikeBinary(text: string): boolean {
+  return text.includes("\0") || text.includes("\uFFFD");
+}
+
 export function parseJsonObject(raw: string, what: string): Record<string, unknown> {
+  const cleaned = cleanRawText(raw);
+  if (cleaned.length === 0) {
+    throw new ImportFileError(`${what}: файл пуст`);
+  }
+  if (looksLikeBinary(cleaned)) {
+    throw new ImportFileError(
+      `${what}: это не JSON-файл (возможно, PCAP или другой бинарь)`,
+    );
+  }
   let data: unknown;
   try {
-    data = JSON.parse(raw);
+    data = JSON.parse(cleaned);
   } catch {
-    throw new Error(`${what}: файл не является корректным JSON`);
+    throw new ImportFileError(`${what}: файл не является корректным JSON`);
   }
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
-    throw new Error(`${what}: ожидался объект JSON`);
+    throw new ImportFileError(`${what}: ожидался объект JSON`);
   }
   return data as Record<string, unknown>;
 }

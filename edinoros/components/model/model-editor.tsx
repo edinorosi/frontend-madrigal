@@ -13,6 +13,7 @@ import {
   Play,
   Plus,
   Radar,
+  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -136,6 +137,9 @@ export function ModelEditor() {
   const cancelApply = useAppStore((state) => state.cancelApply);
   const analyzePatterns = useAppStore((state) => state.analyzePatterns);
   const patternLoading = useAppStore((state) => state.patternLoading);
+  const inferModelFromJournal = useAppStore((state) => state.inferModelFromJournal);
+  const inferLoading = useAppStore((state) => state.inferLoading);
+  const inferError = useAppStore((state) => state.inferError);
   const applyCaptureProgress = useAppStore(
     (state) => state.applyCaptureProgress,
   );
@@ -333,15 +337,20 @@ export function ModelEditor() {
       if (!activeModel) return;
       const rule = activeModel.rules.find((item) => item.id === ruleId);
       if (!rule) return;
-      downloadJson(
+      void downloadJson(
         ruleFileName(rule),
         buildRuleExport(rule, {
           id: activeModel.id,
           name: activeModel.name,
         }),
-      );
+      ).catch((error: unknown) => {
+        showRuleNotice(
+          error instanceof Error ? error.message : "Ошибка экспорта",
+          true,
+        );
+      });
     },
-    [activeModel],
+    [activeModel, showRuleNotice],
   );
 
   const handleImportRuleFile = useCallback(
@@ -632,6 +641,27 @@ export function ModelEditor() {
           >
             <Radar className="size-3.5" />
             Распознать паттерны
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2"
+            disabled={inferLoading}
+            title="Вывести модель из журнала действий (дифф сообщений с разными параметрами)"
+            onClick={() => {
+              void inferModelFromJournal().then((found) => {
+                if (!found) {
+                  const detail = useAppStore.getState().inferError;
+                  showRuleNotice(
+                    detail ?? "Уверенных полей не найдено — evidence пустое",
+                    true,
+                  );
+                }
+              });
+            }}
+          >
+            <Sparkles className="size-3.5" />
+            Вывести модель
           </Button>
           <Button
             variant="outline"

@@ -10,6 +10,14 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -17,7 +25,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { downloadJson, downloadText } from "@/src/lib/export/download";
-import { buildModelExport } from "@/src/lib/export/model-export";
+import {
+  ImportFileError,
+  buildModelExport,
+} from "@/src/lib/export/model-export";
 import {
   buildProjectExport,
   modelFileName,
@@ -42,6 +53,14 @@ export function ExportButton() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Ошибка импорта: показывается модалкой с полным текстом, не обрезкой. */
+  const [importError, setImportError] = useState<{
+    title: string;
+    message: string;
+    fileName: string;
+    hint: "rule-file" | "model-file" | null;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
   const noticeTimerRef = useRef<number | null>(null);
 
   const showNotice = (text: string) => {
@@ -72,7 +91,13 @@ export function ExportButton() {
   const collectExportData = useAppStore((state) => state.collectExportData);
   const importModel = useAppStore((state) => state.importModel);
   const importProject = useAppStore((state) => state.importProject);
+  const openModelEditor = useAppStore((state) => state.openModelEditor);
   const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
+
+  // Открытая модалка забирает Esc — как в ConfirmDialog.
+  useEffect(() => {
+    setOverlayOpen(importError !== null);
+  }, [importError, setOverlayOpen]);
 
   const runExport = async (
     action: () => Promise<void>,
@@ -95,8 +120,8 @@ export function ExportButton() {
       if (!activeModel) return;
       const json = buildModelExport(activeModel, capture);
       const name = modelFileName(activeModel.name);
-      downloadJson(name, json);
-      downloadText(
+      await downloadJson(name, json);
+      await downloadText(
         modelReadmeFileName(activeModel.name),
         buildModelReadme(activeModel, name),
         "text/markdown",
@@ -107,32 +132,75 @@ export function ExportButton() {
     runExport(async () => {
       const data = await collectExportData();
       const markdown = buildReportMarkdown(data);
-      downloadText(reportFileName(data.capture?.fileName ?? null), markdown, "text/markdown");
+      await downloadText(reportFileName(data.capture?.fileName ?? null), markdown, "text/markdown");
     }, "Отчёт скачан");
 
   const handleExportProject = () =>
     runExport(async () => {
       const data = await collectExportData();
-      const project = buildProjectExport(data, {
-        modelId: useAppStore.getState().activeModelId,
-        sessionId: useAppStore.getState().activeSessionId,
-        messageId: useAppStore.getState().activeMessageId,
-        fieldsSource: useAppStore.getState().fieldsSource,
-        messageModels: useAppStore.getState().messageModels,
-      });
-      downloadJson(projectFileName(data.capture?.fileName ?? null), project);
+      const project = buildProjectExport(
+        data,
+        {
+          modelId: useAppStore.getState().activeModelId,
+          sessionId: useAppStore.getState().activeSessionId,
+          messageId: useAppStore.getState().activeMessageId,
+          fieldsSource: useAppStore.getState().fieldsSource,
+          messageModels: useAppStore.getState().messageModels,
+        },
+        // Все записи проекта: без третьего аргумента в файл попадёт
+        // только активная запись (дефолт buildProjectExport).
+        useAppStore.getState().captures,
+      );
+      await downloadJson(projectFileName(data.capture?.fileName ?? null), project);
     }, "Проект скачан");
 
-  const handleImportFile = () =>
-    runExport(async () => {
-      const file = inputRef.current?.files?.[0];
-      if (!file) return;
-      if (importKindRef.current === "model") {
-        await importModel(file);
-      } else {
-        await importProject(file);
+  const handleImportFile = () => {
+    const file = inputRef.current?.files?.[0];
+    if (!file) return;
+    const fileName = file.name;
+    const kind = importKindRef.current;
+    setBusy(true);
+    setError(null);
+    void (async () => {
+      try {
+        if (kind === "model") {
+          await importModel(file);
+        } else {
+          await importProject(file);
+        }
+        showNotice("Импорт завершён");
+      } catch (caught) {
+        const message =
+          caught instanceof Error ? caught.message : "Не удалось импортировать файл";
+        setImportError({
+          title:
+            kind === "model"
+              ? "Не удалось импортировать модель"
+              : "Не удалось импортировать проект",
+          message,
+          fileName,
+          hint: caught instanceof ImportFileError ? caught.hint : null,
+        });
+      } finally {
+        setBusy(false);
       }
-    }, "Импорт завершён");
+    })();
+  };
+
+  const copyImportError = () => {
+    if (!importError) return;
+    void navigator.clipboard
+      .writeText(
+        `${importError.title}: ${importError.message} (файл: ${importError.fileName})`,
+      )
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {
+        // Буфер обмена недоступен — текст ошибки и так виден в диалоге.
+      });
+  };
 
   return (
     <>
@@ -148,7 +216,7 @@ export function ExportButton() {
       />
       {error ? (
         <span
-          className="max-w-48 truncate text-[11px] text-destructive"
+          className="max-w-64 text-[11px] text-destructive whitespace-normal break-words"
           title={error}
         >
           {error}
@@ -208,6 +276,41 @@ export function ExportButton() {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <Dialog
+        open={importError !== null}
+        onOpenChange={(next) => {
+          setOverlayOpen(next);
+          if (!next) setImportError(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{importError?.title}</DialogTitle>
+            <DialogDescription>Файл: {importError?.fileName}</DialogDescription>
+          </DialogHeader>
+          <p className="text-sm break-words">{importError?.message}</p>
+          <DialogFooter className="gap-1 sm:justify-end">
+            {importError?.hint === "rule-file" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setImportError(null);
+                  openModelEditor();
+                }}
+              >
+                Открыть редактор модели
+              </Button>
+            ) : null}
+            <Button variant="outline" size="sm" onClick={copyImportError}>
+              {copied ? "Скопировано" : "Скопировать текст"}
+            </Button>
+            <Button size="sm" onClick={() => setImportError(null)}>
+              Закрыть
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "metadata": {
+    "exportedAt": "2026-10-15T15:55:41.275Z",
+    "author": null
+  },
+  "model": {
+    "id": "model-50ed845c-3888-49ec-9b0e-036f0941ade6",
+    "name": "Новая модельфцвфв",
+    "status": "draft",
+    "rules": [],
+    "createdAt": "2026-10-15T15:54:59.459Z"
+  },
+  "source": {
+    "captureName": "06_missing_beginning.pcapng",
+    "captureSizeBytes": 4424,
+    "captureImportedAt": "2026-10-15T15:54:40.556317929+00:00"
+  }
+}

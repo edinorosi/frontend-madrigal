@@ -20,6 +20,7 @@ import type {
   CheckResult,
   CheckRow,
   Direction,
+  InferResult,
   Message,
   Model,
   Observation,
@@ -336,6 +337,25 @@ export const mockService: AppService = {
     const message = messages.find((item) => item.id === messageId);
     if (!message) throw new Error(`Сообщение ${messageId} не найдено`);
     return message.fields;
+  },
+
+  async inferModel(_captureId: string): Promise<InferResult> {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    return {
+      model: {
+        id: "mock-infer",
+        name: "auto mock",
+        status: "draft",
+        rules: [],
+        createdAt: new Date().toISOString(),
+      },
+      evidence: [],
+      framing_used: "mock",
+      samples: 0,
+      labeled: 0,
+      clusters: 0,
+    };
   },
 };
 

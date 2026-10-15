@@ -1,14 +1,15 @@
-import { CircleHelp, Check, X } from "lucide-react";
+import { CircleHelp, Check, PieChart, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ParseStatus } from "@/src/types/domain";
 
 const STATUS = {
   parsed: { Icon: Check, tone: "text-ok", title: "Разобрано" },
+  partial: { Icon: PieChart, tone: "text-warn", title: "Частично" },
   unknown: { Icon: CircleHelp, tone: "text-warn", title: "Неизвестно" },
   error: { Icon: X, tone: "text-destructive", title: "Ошибка разбора" },
 } as const;
 
-/** Статус разбора сообщения: ✓ разобрано, ? неизвестно, ✗ ошибка. */
+/** Статус разбора сообщения: ✓ разобрано, ◐ частично, ? неизвестно, ✗ ошибка. */
 export function StatusIcon({
   status,
   className,

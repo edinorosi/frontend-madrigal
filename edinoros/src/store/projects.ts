@@ -14,6 +14,7 @@ import { create } from "zustand";
 import { downloadJson } from "@/src/lib/export/download";
 import {
   buildProjectExport,
+  captureRefOf,
   parseProjectExport,
   projectFileName,
   type ProjectExportFile,
@@ -294,6 +295,20 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       return;
     }
     set({ projects: next, activeProjectId: meta.id, busy: false, error: null });
+    // Свежий проект: прогоняем через общий скоуп, иначе увидит чужие
+    // модели и записи из глобальных списков.
+    const imported = useAppStore
+      .getState()
+      .captures.find(
+        (item) => item.id === useAppStore.getState().activeCaptureId,
+      );
+    await useAppStore.getState().applyProjectData({
+      ...emptyProjectData(),
+      capture: imported ?? null,
+      // Скоуп обязан включать запись, иначе applyProjectData вычистит
+      // только что импортированную запись пустым списком captures.
+      captures: imported ? [captureRefOf(imported)] : [],
+    });
   },
 
   async openDemo() {
@@ -338,6 +353,13 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       return;
     }
     set({ projects: next, busy: false });
+    // Демо без снимка: скоуп как у свежего проекта — только своя запись.
+    const demoCapture = useAppStore.getState().captures[0] ?? null;
+    await useAppStore.getState().applyProjectData({
+      ...emptyProjectData(),
+      capture: demoCapture,
+      captures: demoCapture ? [captureRefOf(demoCapture)] : [],
+    });
   },
 
   async openProject(id) {
@@ -392,9 +414,10 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
         await useAppStore.getState().loadModels();
       }
 
-      if (data) {
-        await useAppStore.getState().applyProjectData(data);
-      }
+      // Снимок — истина и для моделей: применяем всегда, даже пустой.
+      // Иначе в свежий проект просочатся чужие модели из глобального
+      // списка бэкенда (applyProjectData сам их отрежет по снимку).
+      await useAppStore.getState().applyProjectData(data ?? emptyProjectData());
     } catch (error) {
       set({ error: describeError(error) });
     } finally {
@@ -446,6 +469,9 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
           fieldsSource: state.fieldsSource,
           messageModels: state.messageModels,
         },
+        // Все записи проекта, а не только активная: иначе повторный вход
+        // обрежет список по снапшоту с одним id (см. applyProjectData).
+        state.captures,
       );
 
       const previous = readRecord(id);
@@ -505,7 +531,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     }));
   },
 
-  exportProject(id) {
+  async exportProject(id) {
     const record = readRecord(id);
     if (!record) {
       set({ error: "Проект не найден — возможно, он был удалён" });
@@ -513,7 +539,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       return;
     }
     const data = record.data ?? emptyProjectData();
-    downloadJson(
+    await downloadJson(
       projectFileName(record.meta.meta.fileName ?? record.meta.name),
       data,
     );

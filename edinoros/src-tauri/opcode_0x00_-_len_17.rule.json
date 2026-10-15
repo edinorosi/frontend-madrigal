@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "metadata": {
+    "exportedAt": "2026-10-15T13:12:28.500Z",
+    "author": null
+  },
+  "rule": {
+    "condition": {
+      "opcode": 0
+    },
+    "fields": [],
+    "id": "rule-ac9e2723-b6a9-470f-a234-a171614e6e78",
+    "name": "opcode 0x00 / len 17"
+  },
+  "sourceModel": {
+    "id": "infer-211ff0df-9bab-4c51-a48f-fef5f0ac94ca",
+    "name": "auto 07_checksum_offload.pcap"
+  }
+}

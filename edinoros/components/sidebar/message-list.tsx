@@ -417,6 +417,7 @@ export function MessageList() {
             <SelectContent>
               <SelectItem value="all">Любой статус</SelectItem>
               <SelectItem value="parsed">Разобрано</SelectItem>
+              <SelectItem value="partial">Частично</SelectItem>
               <SelectItem value="unknown">Неизвестно</SelectItem>
               <SelectItem value="error">Ошибка</SelectItem>
               <SelectItem value="anomaly">Аномалии</SelectItem>

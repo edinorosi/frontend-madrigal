@@ -3,6 +3,7 @@ import type {
   Capture,
   CheckResult,
   Direction,
+  InferResult,
   Message,
   MessageField,
   Model,
@@ -76,4 +77,9 @@ export interface AppService {
    * поля сообщения из мока.
    */
   applyModel(messageId: string, modelId: string): Promise<MessageField[]>;
+  /**
+   * Автовывод модели из журнала действий: дифф сообщений с разными
+   * параметрами, кластеризация по опкоду, поля с evidence совпадений.
+   */
+  inferModel(captureId: string): Promise<InferResult>;
 }

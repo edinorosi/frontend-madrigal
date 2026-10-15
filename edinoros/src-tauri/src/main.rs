@@ -168,6 +168,8 @@ fn main() {
         {
             builder = builder.plugin(tauri_plugin_mcp_bridge::init());
         }
+        builder = builder.plugin(tauri_plugin_dialog::init());
+        builder = builder.plugin(tauri_plugin_fs::init());
         builder
         .build(tauri::generate_context!())
         .expect("tauri app build failed")

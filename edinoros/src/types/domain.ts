@@ -12,7 +12,7 @@ export type Direction = "request" | "response";
 export type MessageRole = "REQ" | "RSP" | "NOTIFY";
 
 /** Результат применения модели разбора к сообщению. */
-export type ParseStatus = "parsed" | "unknown" | "error";
+export type ParseStatus = "parsed" | "partial" | "unknown" | "error";
 
 /** Статус интерпретации сообщения. */
 export type InterpretationStatus = "parsed" | "partial" | "not-parsed";
@@ -244,4 +244,34 @@ export interface Model {
   status: ModelStatus;
   rules: ModelRule[];
   createdAt: string;
+}
+
+/** Одно найденное поле при автовыводе модели (бэкенд /analyze/fields). */
+export interface InferEvidenceField {
+  name: string;
+  offset: number;
+  length: number;
+  type: string;
+  matches: number;
+  total: number;
+}
+
+/** Один кластер автовывода: messages одной длины и опкода. */
+export interface InferEvidenceRule {
+  rule_id: string;
+  opcode: number | null;
+  msg_len: number;
+  samples: number;
+  labeled: number;
+  fields: InferEvidenceField[];
+}
+
+/** Результат автовывода модели из журнала действий. */
+export interface InferResult {
+  model: Model;
+  evidence: InferEvidenceRule[];
+  framing_used: string;
+  samples: number;
+  labeled: number;
+  clusters: number;
 }

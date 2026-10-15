@@ -11,6 +11,7 @@ import type {
   Capture,
   CheckResult,
   Direction,
+  InferResult,
   Message,
   MessageField,
   Model,
@@ -238,5 +239,13 @@ export const httpService: AppService = {
         body: JSON.stringify({ modelId }),
       },
     );
+  },
+
+  async inferModel(captureId: string) {
+    return requestJson<InferResult>(`/api/v1/analyze/fields`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ capture_id: captureId }),
+    });
   },
 };

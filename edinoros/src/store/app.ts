@@ -11,6 +11,7 @@ import { resolveMessageModel } from "@/src/lib/message-model";
 import { applyModelCached, invalidateApplyCache } from "@/src/lib/parse";
 import { resolveObservationStatus } from "@/src/lib/observations";
 import { parseModelExport } from "@/src/lib/export/model-export";
+import { emptyProjectData, snapshotCaptureIds } from "@/src/lib/projects";
 import {
   parseProjectExport,
   type ProjectExportFile,
@@ -29,6 +30,7 @@ import type {
   CheckRow,
   CheckStatus,
   Direction,
+  InferResult,
   Message,
   Model,
   Observation,
@@ -51,7 +53,8 @@ export type FieldsSource = "json" | "model";
 /**
  * Фильтры списка сообщений. Живут в сторе, а не в состоянии компонента:
  * смена таба сайдбара размонтирует список, и фильтры/скролл не должны
- * теряться. "anomaly" — статусы «неизвестно» и «ошибка» (счётчик аномалий
+ * теряться. "anomaly" — всё кроме «разобрано»: частично, неизвестно,
+ * ошибка (счётчик аномалий
  * в статусбаре).
  */
 export interface MessageFilter {
@@ -96,6 +99,12 @@ const NO_LOADING: Record<LoadingKey, boolean> = {
 interface AppState {
   captures: Capture[];
   activeCaptureId: string | null;
+  /**
+   * Скоуп записей проекта: какие id из глобального списка бэкенда
+   * принадлежат открытому проекту. null — скоупа нет (до первого
+   * открытия). Дропдаун записей и проверка видят только скоуп.
+   */
+  projectCaptureIds: string[] | null;
 
   sessions: Session[];
   activeSessionId: string | null;
@@ -269,8 +278,18 @@ interface AppState {
   acceptPatternSuggestion: () => Promise<void>;
   /** Отклонить предложение (и отменить идущий анализ). */
   dismissPatternSuggestion: () => void;
+  /** Автовывод модели из журнала: результат, загрузка, ошибка. */
+  inferResult: InferResult | null;
+  inferLoading: boolean;
+  inferError: string | null;
+  /** Запустить автовывод по активной записи; true — есть что показать. */
+  inferModelFromJournal: () => Promise<boolean>;
+  /** Сохранить выведенную модель и сделать её активной. */
+  acceptInferModel: () => Promise<void>;
+  /** Закрыть диалог автовывода. */
+  dismissInferModel: () => void;
 
-  loadProject: () => Promise<void>;
+  loadProject: () => Promise<Capture[]>;
   selectCapture: (captureId: string) => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
   selectMessage: (messageId: string) => Promise<void>;
@@ -378,6 +397,7 @@ let staleCandidateRuleNames = new Map<string, string>();
 export const useAppStore = create<AppState>((set, get) => ({
   captures: [],
   activeCaptureId: null,
+  projectCaptureIds: null,
 
   sessions: [],
   activeSessionId: null,
@@ -630,14 +650,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   importError: null,
   patternSuggestion: null,
   patternLoading: false,
+  inferResult: null,
+  inferLoading: false,
+  inferError: null,
 
   async loadProject() {
     set((state) => ({
       loading: { ...state.loading, captures: true },
     }));
 
+    let fetched: Capture[] = [];
     try {
-      const captures = await appService.listCaptures();
+      fetched = await appService.listCaptures();
+      const scope = get().projectCaptureIds;
+      const captures =
+        scope === null
+          ? fetched
+          : fetched.filter((item) => scope.includes(item.id));
       set((state) => ({
         captures,
         loading: { ...state.loading, captures: false },
@@ -656,9 +685,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Модели (R3) грузятся отдельно: их сбой не должен ронять просмотр записи.
     void get().loadModels();
+    return fetched;
   },
 
   async selectCapture(captureId) {
+    const scope = get().projectCaptureIds;
+    if (scope !== null && !scope.includes(captureId)) return;
     const token = ++requestToken;
 
     // Другая запись — сравнивать прежние сообщения больше не с чем.
@@ -1443,11 +1475,63 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Перечитываем список моделей и выставляем активную из файла.
     await get().loadModels();
+    // Модели принадлежат проекту: снимок — истина. Глобальный список
+    // бэкенда может содержать модели других проектов — отрезаем чужие,
+    // иначе они синхронизируются между проектами.
+    const wantedModelIds = new Set(project.models.map((item) => item.id));
+    const scopedModels = (get().models ?? []).filter((item) =>
+      wantedModelIds.has(item.id),
+    );
+    set({ models: scopedModels });
     if (
       project.active.modelId &&
-      get().models?.some((item) => item.id === project.active.modelId)
+      scopedModels.some((item) => item.id === project.active.modelId)
     ) {
       get().setActiveModel(project.active.modelId);
+    } else if (
+      get().activeModelId &&
+      !scopedModels.some((item) => item.id === get().activeModelId)
+    ) {
+      // Активная из прошлого контекста в проект не входит — откат.
+      get().setActiveModel(scopedModels[0]?.id ?? null);
+    }
+
+    // Записи принадлежат проекту: видны только записи снимка (плюс
+    // импортированные позже — startImport дописывает в конец списка).
+    // Иначе дропдаун записей общий на все проекты.
+    const wantedIds = new Set(snapshotCaptureIds(project));
+    set({ projectCaptureIds: [...wantedIds] });
+    set({
+      captures: get().captures.filter((item) => wantedIds.has(item.id)),
+    });
+    if (
+      get().activeCaptureId !== null &&
+      wantedIds.has(get().activeCaptureId as string)
+    ) {
+      // Данные уже принадлежат нужной записи — гасить нечего.
+      // Чистка тут давала бы лишний пустой кадр («Сессия не выбрана»)
+      // между перевыбором сессий.
+    } else {
+      // Выбранной записи в проекте нет — гасим зависимое состояние,
+      // иначе покажем чужие сессии/сообщения без их записи.
+      get().stopCompare();
+      set({
+        activeCaptureId: null,
+        sessions: [],
+        activeSessionId: null,
+        messages: [],
+        activeMessageId: null,
+        messagesError: null,
+        bytes: null,
+        bytesError: null,
+        observations: [],
+        selection: null,
+        hoveredFieldId: null,
+        journalCount: null,
+        // Дальше выбираем запись явно (ниже), она включит свои скелетоны.
+        // Голый NO_LOADING тут рисовал бы «Сессия не выбрана» навсегда.
+        loading: NO_LOADING,
+      });
     }
 
     // Источник полей, привязки сообщений к моделям и последняя проверка.
@@ -1460,7 +1544,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       checkLoading: false,
     });
 
-    // Запись может уже быть загружена — переключаемся, если id совпал.
+    // Запись проекта: сначала своя из снимка, иначе первая из скоупа.
+    // (Фолбэк на случай, если запись снимка пропала из бэкенда —
+    // например, файл переимпортировали под новым id.)
+    const scopeIds = new Set(snapshotCaptureIds(project));
+    let targetId: string | null = null;
+    if (project.capture && scopeIds.has(project.capture.id)) {
+      targetId = project.capture.id;
+    } else {
+      targetId = get().captures[0]?.id ?? null;
+    }
+    if (targetId && targetId !== get().activeCaptureId) {
+      await get().selectCapture(targetId);
+    }
     const { activeCaptureId } = get();
     if (project.capture && project.capture.id === activeCaptureId) {
       if (
@@ -1585,6 +1681,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       set((state) => ({
         captures: [...state.captures, capture],
+        projectCaptureIds: state.projectCaptureIds === null
+          ? [capture.id]
+          : state.projectCaptureIds.includes(capture.id)
+            ? state.projectCaptureIds
+            : [...state.projectCaptureIds, capture.id],
         importPhase: "done",
         importProgress: 1,
       }));
@@ -1679,6 +1780,36 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ patternSuggestion: null, patternLoading: false });
   },
 
+  async inferModelFromJournal() {
+    const { activeCaptureId } = get();
+    if (!activeCaptureId) return false;
+    set({ inferLoading: true, inferError: null });
+    try {
+      const result = await appService.inferModel(activeCaptureId);
+      set({ inferLoading: false, inferResult: result });
+      return result.model.rules.length > 0;
+    } catch (error) {
+      set({
+        inferLoading: false,
+        inferError: describeError(error),
+        inferResult: null,
+      });
+      return false;
+    }
+  },
+
+  async acceptInferModel() {
+    const result = get().inferResult;
+    if (!result) return;
+    set({ inferResult: null });
+    await get().saveModel(result.model);
+    get().setActiveModel(result.model.id);
+  },
+
+  dismissInferModel() {
+    set({ inferResult: null, inferLoading: false, inferError: null });
+  },
+
   resetProject() {
     requestToken += 1;
     checkToken += 1;
@@ -1690,6 +1821,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       captures: [],
       activeCaptureId: null,
+      projectCaptureIds: null,
       sessions: [],
       activeSessionId: null,
       messages: [],
@@ -1739,6 +1871,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       importError: null,
       patternSuggestion: null,
       patternLoading: false,
+      inferResult: null,
+      inferLoading: false,
+      inferError: null,
     });
   },
 }));

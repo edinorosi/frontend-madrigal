@@ -8,6 +8,7 @@
 import { parseJsonObject } from "@/src/lib/export/model-export";
 import type { ExportData } from "@/src/lib/export/report";
 import type {
+  Capture,
   CheckResult,
   Model,
   Observation,
@@ -15,6 +16,15 @@ import type {
 
 /** Текущая версия схемы экспорта проекта. */
 export const PROJECT_SCHEMA_VERSION = 1;
+
+/** Ссылка на запись проекта (R6.4-расширение, обратно совместимо). */
+export interface ProjectCaptureRef {
+  id: string;
+  fileName: string;
+  importedAt: string;
+  sizeBytes: number;
+  sessionCount: number;
+}
 
 /** Конверт экспорта проекта. */
 export interface ProjectExportFile {
@@ -31,12 +41,24 @@ export interface ProjectExportFile {
     sizeBytes: number;
     sessionCount: number;
   } | null;
+  /**
+   * Все записи проекта (активная — в `capture`). Отсутствие — старый файл,
+   * тогда считается, что в проекте только `capture`.
+   */
+  captures?: ProjectCaptureRef[];
   /** Настройки исследования — активные сущности и источник полей. */
   active: {
     modelId: string | null;
     sessionId: string | null;
     messageId: string | null;
     fieldsSource: "json" | "model";
+    /**
+     * Активная запись проекта (id из captures[]). Необязательно:
+     * отсутствие — активная запись определяется полем `capture`
+     * (снапшоты из localStorage) либо первой из `captures[]`.
+     * Расширение schemaVersion 1, обратно совместимо.
+     */
+    captureId?: string | null;
     /**
      * Привязки сообщений к моделям (R10.1): messageId → modelId.
      * Необязательно: отсутствие — все сообщения разбираются активной
@@ -50,10 +72,22 @@ export interface ProjectExportFile {
   checkResult: CheckResult | null;
 }
 
+/** Ссылка на запись для снимка/экспорта: только идентифицирующие поля. */
+export function captureRefOf(capture: Capture): ProjectCaptureRef {
+  return {
+    id: capture.id,
+    fileName: capture.fileName,
+    importedAt: capture.importedAt,
+    sizeBytes: capture.sizeBytes,
+    sessionCount: capture.sessionCount,
+  };
+}
+
 /** Сборка конверта проекта из снимка данных. */
 export function buildProjectExport(
   data: ExportData,
   active: ProjectExportFile["active"],
+  captures?: Capture[],
 ): ProjectExportFile {
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
@@ -70,11 +104,23 @@ export function buildProjectExport(
           sessionCount: data.capture.sessionCount,
         }
       : null,
-    active,
+    active: { ...active, captureId: activeCaptureIdOf(data, active) },
     models: data.model ? replaceActive(data.models, data.model) : data.models,
     observations: data.observations,
     checkResult: data.checkResult,
+    captures: (captures ?? (data.capture ? [data.capture] : [])).map(
+      captureRefOf,
+    ),
   };
+}
+
+/** Активная запись снапшота: id активной записи для восстановления. */
+function activeCaptureIdOf(
+  data: ExportData,
+  active: ProjectExportFile["active"],
+): string | null {
+  if (data.capture) return data.capture.id;
+  return active.captureId ?? null;
 }
 
 /** Активная модель могла быть изменена после загрузки списка — подменяем. */
@@ -117,6 +163,11 @@ export function parseProjectExport(raw: string): ProjectExportFile {
     throw new Error("в файле нет объекта active");
   }
   const activeSource = activeRaw as Record<string, unknown>;
+  const activeCaptureId =
+    typeof activeSource.captureId === "string" &&
+    activeSource.captureId.length > 0
+      ? activeSource.captureId
+      : null;
   const messageModelsRaw = activeSource.messageModels;
   const messageModels: Record<string, string> = {};
   if (
@@ -139,6 +190,7 @@ export function parseProjectExport(raw: string): ProjectExportFile {
     messageId:
       typeof activeSource.messageId === "string" ? activeSource.messageId : null,
     fieldsSource: activeSource.fieldsSource === "model" ? "model" : "json",
+    captureId: activeCaptureId,
     messageModels,
   };
 
@@ -151,6 +203,35 @@ export function parseProjectExport(raw: string): ProjectExportFile {
     checkResult = file.checkResult as CheckResult;
   }
 
+  let captures: ProjectCaptureRef[] | undefined;
+  if (Array.isArray(file.captures)) {
+    const list: ProjectCaptureRef[] = [];
+    for (const raw of file.captures) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const item = raw as Record<string, unknown>;
+      if (typeof item.id !== "string" || item.id.length === 0) continue;
+      list.push({
+        id: item.id,
+        fileName: typeof item.fileName === "string" ? item.fileName : item.id,
+        importedAt: typeof item.importedAt === "string" ? item.importedAt : "",
+        sizeBytes: typeof item.sizeBytes === "number" ? item.sizeBytes : 0,
+        sessionCount:
+          typeof item.sessionCount === "number" ? item.sessionCount : 0,
+      });
+    }
+    captures = list;
+  }
+
+  // Активная запись восстанавливается из списка по active.captureId;
+  // без него (старые файлы) — первая из списка. capture: null только
+  // если список пуст: applyProjectData и openProject опираются на это поле.
+  const capture: ProjectExportFile["capture"] =
+    captures !== undefined && captures.length > 0
+      ? (captures.find((item) => item.id === activeCaptureId) ??
+        captures[0] ??
+        null)
+      : null;
+
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     metadata: {
@@ -161,11 +242,12 @@ export function parseProjectExport(raw: string): ProjectExportFile {
           : new Date().toISOString(),
       author: null,
     },
-    capture: null,
+    capture,
     active,
     models,
     observations,
     checkResult,
+    ...(captures !== undefined ? { captures } : {}),
   };
 }
 

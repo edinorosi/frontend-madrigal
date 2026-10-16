@@ -3,6 +3,7 @@
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { ExportButton } from "@/components/export/export-button";
 import { ImportButton } from "@/components/import-button";
+import { ScriptButton } from "@/components/scripts/script-dialog";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -155,6 +156,7 @@ export function Topbar() {
         ) : null}
         <ExportButton />
         <ImportButton size="sm" variant="outline" />
+        <ScriptButton />
         <Separator orientation="vertical" className="mx-1 h-5" />
         <ThemeToggle />
       </div>

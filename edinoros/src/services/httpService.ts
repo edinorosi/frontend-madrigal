@@ -5,7 +5,13 @@
  * Контракт AppService не меняется; ошибки кидаются как Error — их ловит
  * существующая обработка в сторе (describeError).
  */
-import type { AppService } from "@/src/services/appService";
+import type {
+  AppService,
+  CodegenLang,
+  CodegenResult,
+  ProjectArchiveImportResult,
+  ProjectArchiveRequest,
+} from "@/src/services/appService";
 import type {
   Action,
   Capture,
@@ -31,6 +37,23 @@ export class HttpServiceError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * Токен для замка бэкенда (env API_TOKEN там).
+ * Без NEXT_PUBLIC_API_TOKEN — как раньше, без заголовка.
+ */
+function authHeaders(): Record<string, string> {
+  const token = process.env.NEXT_PUBLIC_API_TOKEN;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function withAuth(init: RequestInit): RequestInit {
+  const headers = new Headers(init.headers);
+  for (const [key, value] of Object.entries(authHeaders())) {
+    if (!headers.has(key)) headers.set(key, value);
+  }
+  return { ...init, headers };
+}
 
 function requireBaseUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL;
@@ -58,10 +81,10 @@ export async function requestJson<T>(
 
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}`, {
+    response = await fetch(`${baseUrl}${path}`, withAuth({
       ...rest,
       signal: controller.signal,
-    });
+    }));
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new HttpServiceError(
@@ -117,10 +140,10 @@ async function requestBytes(
 
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}`, {
+    response = await fetch(`${baseUrl}${path}`, withAuth({
       ...rest,
       signal: controller.signal,
-    });
+    }));
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new HttpServiceError(
@@ -141,6 +164,73 @@ async function requestBytes(
   }
 
   return new Uint8Array(await response.arrayBuffer());
+}
+
+/**
+ * Текстовый ответ (бэкенд отдаёт Markdown отчёта как text/markdown, не JSON).
+ * Семантика ошибок — как в requestJson.
+ */
+async function requestText(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<string> {
+  const baseUrl = requireBaseUrl();
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = init ?? {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, withAuth({
+      ...rest,
+      signal: controller.signal,
+    }));
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new HttpServiceError(
+        `Бэкенд не ответил за ${timeoutMs} мс (${baseUrl})`,
+      );
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new HttpServiceError(`Нет связи с бэкендом ${baseUrl}: ${detail}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body: unknown = await response.json();
+      if (
+        typeof body === "object" &&
+        body !== null &&
+        "error" in body &&
+        typeof body.error === "string"
+      ) {
+        detail = body.error;
+      }
+    } catch {
+      // ответ не JSON — показываем статус
+    }
+    throw new HttpServiceError(
+      detail
+        ? `Бэкенд ${response.status}: ${detail}`
+        : `Бэкенд вернул ${response.status} ${response.statusText}`,
+      response.status,
+    );
+  }
+
+  return response.text();
+}
+
+/**
+ * Бинарный ответ (tar.gz архива проекта — application/gzip).
+ */
+async function requestBlob(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<Uint8Array> {
+  return requestBytes(path, init);
 }
 
 export const httpService: AppService = {
@@ -247,5 +337,46 @@ export const httpService: AppService = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ capture_id: captureId }),
     });
+  },
+
+  async getModelCode(modelId: string, lang: CodegenLang) {
+    return requestJson<CodegenResult>(
+      `/api/v1/models/${encodeURIComponent(modelId)}/codegen?lang=${encodeURIComponent(lang)}`,
+    );
+  },
+
+  async generateBackendReport(captureId: string, projectName: string) {
+    return requestText(`/api/v1/report/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        capture_id: captureId,
+        project_name: projectName,
+      }),
+    });
+  },
+
+  async exportProjectArchive(args: ProjectArchiveRequest) {
+    return requestBlob(`/api/v1/projects/export`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_name: args.projectName,
+        rules: args.rules,
+        files: args.files,
+      }),
+    });
+  },
+
+  async importProjectArchive(file: File) {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return requestJson<ProjectArchiveImportResult>(
+      `/api/v1/projects/import`,
+      {
+        method: "POST",
+        body: form,
+      },
+    );
   },
 };

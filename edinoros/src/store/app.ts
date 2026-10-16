@@ -8,7 +8,8 @@
 import { create } from "zustand";
 import { appService } from "@/src/services";
 import { resolveMessageModel } from "@/src/lib/message-model";
-import { applyModelCached, invalidateApplyCache } from "@/src/lib/parse";
+import { invalidateApplyCache } from "@/src/lib/parse";
+import { applyViaServiceOrLocal } from "@/src/lib/apply";
 import { resolveObservationStatus } from "@/src/lib/observations";
 import { parseModelExport } from "@/src/lib/export/model-export";
 import { emptyProjectData, snapshotCaptureIds } from "@/src/lib/projects";
@@ -289,7 +290,7 @@ interface AppState {
   /** Закрыть диалог автовывода. */
   dismissInferModel: () => void;
 
-  loadProject: () => Promise<Capture[]>;
+  loadProject: (selectFirst?: boolean) => Promise<Capture[]>;
   selectCapture: (captureId: string) => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
   selectMessage: (messageId: string) => Promise<void>;
@@ -589,7 +590,9 @@ export const useAppStore = create<AppState>((set, get) => ({
             message.byteOffset,
             message.length,
           );
-          const result = applyModelCached(message.id, bytes, model);
+          // Бэкенд-режим: разбор через POST apply-model (сервер персистит
+          // поля/статус), при ошибке — локально. Мок-режим: сразу локально.
+          const result = await applyViaServiceOrLocal(message.id, bytes, model);
           if (result.status === "parsed") parsed += 1;
           else if (result.status === "partial") partial += 1;
           else notParsed += 1;
@@ -654,7 +657,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   inferLoading: false,
   inferError: null,
 
-  async loadProject() {
+  async loadProject(selectFirst = true) {
     set((state) => ({
       loading: { ...state.loading, captures: true },
     }));
@@ -672,7 +675,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: { ...state.loading, captures: false },
       }));
 
-      const first = captures[0];
+      // selectFirst=false: список обновили, выбор — на вызывателе
+      // (открытие проекта сразу целится в свою запись, без вспышки чужой).
+      const first = selectFirst ? captures[0] : undefined;
       if (first) {
         await get().selectCapture(first.id);
       }
@@ -875,7 +880,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Своя модель сообщения (R10.1) или активная модель проекта.
       const model = resolveMessageModel(message, models, activeModelId);
       if (model && bytes && activeMessageId === observation.messageId) {
-        const apply = applyModelCached(observation.messageId, bytes, model);
+        const apply = await applyViaServiceOrLocal(
+          observation.messageId,
+          bytes,
+          model,
+        );
         const field = apply.fields.find(
           (item) =>
             item.range.offset <= range.offset &&
@@ -1423,7 +1432,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           opcodes.set(opcode, (opcodes.get(opcode) ?? 0) + 1);
         }
         if (model && bytes) {
-          const result = applyModelCached(message.id, bytes, model);
+          const result = await applyViaServiceOrLocal(message.id, bytes, model);
           applyByMessage.set(message.id, {
             status: result.status,
             uncovered: result.uncovered,

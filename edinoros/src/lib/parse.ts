@@ -67,7 +67,93 @@ function ruleMatches(bytes: Uint8Array, condition: ModelRule["condition"]): bool
     if (length === null || length !== condition.lengthEquals) return false;
   }
 
+  if (condition.terms !== undefined) {
+    for (const term of condition.terms) {
+      if (!termMatches(bytes, term)) return false;
+    }
+  }
+
   return true;
+}
+
+/** Декодировать срез в число под тип (зеркало бэкенда decode_number). */
+function decodeTermNumber(slice: Uint8Array, type: string): number | null {
+  switch (type) {
+    case "uint8":
+      return slice.length >= 1 ? slice[0] : null;
+    case "int8":
+      return slice.length >= 1 ? (slice[0] << 24) >> 24 : null;
+    case "uint16be":
+      return slice.length >= 2 ? (slice[0] << 8) | slice[1] : null;
+    case "uint16le":
+      return slice.length >= 2 ? slice[0] | (slice[1] << 8) : null;
+    case "int16be":
+      return slice.length >= 2 ? ((slice[0] << 8) | slice[1]) << 16 >> 16 : null;
+    case "int16le":
+      return slice.length >= 2 ? (slice[0] | (slice[1] << 8)) << 16 >> 16 : null;
+    case "uint32be":
+      return slice.length >= 4
+        ? ((slice[0] << 24) | (slice[1] << 16) | (slice[2] << 8) | slice[3]) >>> 0
+        : null;
+    case "uint32le":
+      return slice.length >= 4
+        ? (slice[0] | (slice[1] << 8) | (slice[2] << 16) | (slice[3] << 24)) >>> 0
+        : null;
+    case "int32be":
+      return slice.length >= 4
+        ? (slice[0] << 24) | (slice[1] << 16) | (slice[2] << 8) | slice[3]
+        : null;
+    case "int32le":
+      return slice.length >= 4
+        ? slice[0] | (slice[1] << 8) | (slice[2] << 16) | (slice[3] << 24)
+        : null;
+    default:
+      return null;
+  }
+}
+
+function parseTermExpected(
+  type: string,
+  text: string,
+): { kind: "num"; value: number } | { kind: "bytes"; value: number[] } | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  if (type === "string") {
+    return { kind: "bytes", value: Array.from(new TextEncoder().encode(trimmed)) };
+  }
+  if (type === "bytes" || type === "hex") {
+    const compact = trimmed.split(/\s+/).join("");
+    if (compact.length === 0 || compact.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(compact)) {
+      return null;
+    }
+    const out: number[] = [];
+    for (let i = 0; i < compact.length; i += 2) {
+      out.push(Number.parseInt(compact.slice(i, i + 2), 16));
+    }
+    return { kind: "bytes", value: out };
+  }
+  let parsed: number;
+  if (/^0x[0-9a-f]+$/i.test(trimmed)) parsed = Number.parseInt(trimmed.slice(2), 16);
+  else if (/^-?\d+$/.test(trimmed)) parsed = Number(trimmed);
+  else return null;
+  return { kind: "num", value: parsed };
+}
+
+/** Один кастомный term: срез по offset равен equals (зеркало бэкенда bytes_match). */
+function termMatches(
+  bytes: Uint8Array,
+  term: { offset: number; type: string; equals: string },
+): boolean {
+  if (term.offset < 0 || term.offset >= bytes.length) return false;
+  const slice = bytes.subarray(term.offset);
+  const expected = parseTermExpected(term.type, term.equals);
+  if (expected === null) return false;
+  if (expected.kind === "num") {
+    const decoded = decodeTermNumber(slice, term.type);
+    return decoded !== null && decoded === expected.value;
+  }
+  if (slice.length < expected.value.length) return false;
+  return expected.value.every((byte, index) => slice[index] === byte);
 }
 
 /** Смещение поля: "end-2" — предпоследние 2 байта (crc16). */
@@ -95,15 +181,45 @@ function formatValue(bytes: Uint8Array, offset: number, length: number, type: st
       if (slice.length < 1) return "—";
       return `0x${slice[0].toString(16).toUpperCase().padStart(2, "0")}`;
     }
+    case "int8": {
+      if (slice.length < 1) return "—";
+      return `${(slice[0] << 24) >> 24}`;
+    }
     case "uint16be": {
       if (slice.length < 2) return "—";
       const value = (slice[0] << 8) | slice[1];
       return `0x${value.toString(16).toUpperCase().padStart(4, "0")}`;
     }
+    case "uint16le": {
+      if (slice.length < 2) return "—";
+      const value = slice[0] | (slice[1] << 8);
+      return `0x${value.toString(16).toUpperCase().padStart(4, "0")}`;
+    }
+    case "int16be": {
+      if (slice.length < 2) return "—";
+      return `${((slice[0] << 8) | slice[1]) << 16 >> 16}`;
+    }
+    case "int16le": {
+      if (slice.length < 2) return "—";
+      return `${(slice[0] | (slice[1] << 8)) << 16 >> 16}`;
+    }
     case "uint32be": {
       if (slice.length < 4) return "—";
       const value = ((slice[0] << 24) | (slice[1] << 16) | (slice[2] << 8) | slice[3]) >>> 0;
       return `0x${value.toString(16).toUpperCase().padStart(8, "0")}`;
+    }
+    case "uint32le": {
+      if (slice.length < 4) return "—";
+      const value = (slice[0] | (slice[1] << 8) | (slice[2] << 16) | (slice[3] << 24)) >>> 0;
+      return `0x${value.toString(16).toUpperCase().padStart(8, "0")}`;
+    }
+    case "int32be": {
+      if (slice.length < 4) return "—";
+      return `${(slice[0] << 24) | (slice[1] << 16) | (slice[2] << 8) | slice[3]}`;
+    }
+    case "int32le": {
+      if (slice.length < 4) return "—";
+      return `${slice[0] | (slice[1] << 8) | (slice[2] << 16) | (slice[3] << 24)}`;
     }
     case "string": {
       let out = "";
@@ -111,6 +227,12 @@ function formatValue(bytes: Uint8Array, offset: number, length: number, type: st
         out += byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : "·";
       }
       return out;
+    }
+    case "hex": {
+      if (slice.length < 1) return "—";
+      return Array.from(slice)
+        .map((byte) => byte.toString(16).toUpperCase().padStart(2, "0"))
+        .join(" ");
     }
     case "bytes":
     default:

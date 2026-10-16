@@ -11,7 +11,13 @@ import messagesJson from "@/src/mocks/messages.json";
 import modelsJson from "@/src/mocks/models.json";
 import observationsJson from "@/src/mocks/observations.json";
 import sessionsJson from "@/src/mocks/sessions.json";
-import type { AppService } from "@/src/services/appService";
+import type {
+  AppService,
+  CodegenLang,
+  CodegenResult,
+  ProjectArchiveImportResult,
+  ProjectArchiveRequest,
+} from "@/src/services/appService";
 import { applyModelToBytes, type ApplyResult } from "@/src/lib/parse";
 import { readMockSettings, recordImportedCapture } from "@/src/services/mock/scenarios";
 import type {
@@ -356,6 +362,46 @@ export const mockService: AppService = {
       labeled: 0,
       clusters: 0,
     };
+  },
+
+  async getModelCode(
+    _modelId: string,
+    _lang: CodegenLang,
+  ): Promise<CodegenResult> {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    throw new Error(
+      "Генератор кода доступен только при подключённом бэкенде — в мок-режиме используйте экспорт модели (JSON)",
+    );
+  },
+
+  async generateBackendReport(
+    _captureId: string,
+    _projectName: string,
+  ): Promise<string> {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    throw new Error(
+      "Отчёт бэкенда доступен только при подключённом бэкенде — в мок-режиме используйте локальный отчёт (Markdown)",
+    );
+  },
+
+  async exportProjectArchive(
+    _args: ProjectArchiveRequest,
+  ): Promise<Uint8Array> {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    throw new Error(
+      "Архив tar.gz доступен только при подключённом бэкенде — в мок-режиме используйте проект (JSON)",
+    );
+  },
+
+  async importProjectArchive(_file: File): Promise<ProjectArchiveImportResult> {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    throw new Error(
+      "Импорт tar.gz доступен только при подключённом бэкенде — в мок-режиме используйте импорт проекта (JSON)",
+    );
   },
 };
 

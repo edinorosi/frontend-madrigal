@@ -70,6 +70,7 @@ export function ModelGuideDialog({
               <GuideRow term="opcodes" text={MODEL_HELP.opcodes} />
               <GuideRow term="maxMessageLength" text={MODEL_HELP.maxMessageLength} />
               <GuideRow term="messageLength" text={MODEL_HELP.messageLength} />
+              <GuideRow term="условия по байтам" text={MODEL_HELP.termsList} />
               <GuideRow term="Всегда (fallback)" text={MODEL_HELP.fallback} />
             </GuideSection>
             <GuideSection title="Поля">

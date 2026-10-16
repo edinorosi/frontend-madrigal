@@ -24,7 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { downloadJson, downloadText } from "@/src/lib/export/download";
+import { downloadBytes, downloadJson, downloadText, safeFileName } from "@/src/lib/export/download";
 import {
   ImportFileError,
   buildModelExport,
@@ -38,6 +38,8 @@ import {
 } from "@/src/lib/export/project-export";
 import { buildModelReadme } from "@/src/lib/export/readme-model";
 import { buildReportMarkdown } from "@/src/lib/export/report";
+import { appService } from "@/src/services";
+import type { CodegenLang } from "@/src/services/appService";
 import { useAppStore } from "@/src/store/app";
 
 /**
@@ -49,6 +51,7 @@ import { useAppStore } from "@/src/store/app";
  */
 export function ExportButton() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const archiveInputRef = useRef<HTMLInputElement>(null);
   const importKindRef = useRef<"model" | "project">("model");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +94,7 @@ export function ExportButton() {
   const collectExportData = useAppStore((state) => state.collectExportData);
   const importModel = useAppStore((state) => state.importModel);
   const importProject = useAppStore((state) => state.importProject);
+  const loadProject = useAppStore((state) => state.loadProject);
   const openModelEditor = useAppStore((state) => state.openModelEditor);
   const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
 
@@ -154,6 +158,101 @@ export function ExportButton() {
       await downloadJson(projectFileName(data.capture?.fileName ?? null), project);
     }, "Проект скачан");
 
+  const handleCodegen = (lang: CodegenLang) =>
+    runExport(async () => {
+      if (!activeModel) return;
+      const res = await appService.getModelCode(activeModel.id, lang);
+      await downloadText(
+        res.filename,
+        res.code,
+        lang === "python" ? "text/x-python" : "text/plain",
+      );
+    }, `Код парсера (${lang}) скачан`);
+
+  /**
+   * Отчёт бэкенда с откатом на локальный: серверный требует
+   * предварительной проверки (POST /check), иначе 404 — тогда
+   * скачиваем богатый локальный отчёт и честно пишем об этом.
+   */
+  const handleBackendReport = () => {
+    setBusy(true);
+    setError(null);
+    void (async () => {
+      try {
+        const state = useAppStore.getState();
+        const captureId = state.activeCaptureId;
+        if (!captureId) throw new Error("Нет активной записи");
+        const name =
+          state.captures.find((item) => item.id === captureId)?.fileName ??
+          "Проект";
+        const markdown = await appService.generateBackendReport(
+          captureId,
+          name,
+        );
+        await downloadText(
+          reportFileName(
+            state.captures.find((item) => item.id === captureId)?.fileName ??
+              null,
+          ),
+          markdown,
+          "text/markdown",
+        );
+        showNotice("Отчёт бэкенда скачан");
+      } catch {
+        try {
+          const data = await collectExportData();
+          const markdown = buildReportMarkdown(data);
+          await downloadText(reportFileName(data.capture?.fileName ?? null), markdown, "text/markdown");
+          showNotice("Бэкенд недоступен — скачан локальный отчёт");
+        } catch (fallback) {
+          setError(
+            fallback instanceof Error ? fallback.message : "Ошибка экспорта",
+          );
+        }
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
+  const handleArchiveExport = () =>
+    runExport(async () => {
+      const state = useAppStore.getState();
+      const name =
+        state.captures.find((item) => item.id === state.activeCaptureId)
+          ?.fileName ?? "Проект";
+      const bytes = await appService.exportProjectArchive({
+        projectName: name,
+        rules: activeModel?.rules ?? [],
+        // Пути pcap на сервере фронту неизвестны — архив едет
+        // с rules.json/manifest.json без pcap.
+        files: [],
+      });
+      await downloadBytes(`${safeFileName(name)}.tar.gz`, bytes);
+    }, "Архив проекта скачан");
+
+  const handleArchiveImportFile = () => {
+    const file = archiveInputRef.current?.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    void (async () => {
+      try {
+        const res = await appService.importProjectArchive(file);
+        await loadProject();
+        showNotice(
+          `Архив импортирован: ${res.imported.length}, пропущено: ${res.skipped}`,
+        );
+      } catch (caught) {
+        setError(
+          caught instanceof Error ? caught.message : "Не удалось импортировать архив",
+        );
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
   const handleImportFile = () => {
     const file = inputRef.current?.files?.[0];
     if (!file) return;
@@ -214,6 +313,16 @@ export function ExportButton() {
           if (inputRef.current) inputRef.current.value = "";
         }}
       />
+      <input
+        ref={archiveInputRef}
+        type="file"
+        accept=".tar.gz,.tgz,application/gzip"
+        className="hidden"
+        onChange={() => {
+          handleArchiveImportFile();
+          if (archiveInputRef.current) archiveInputRef.current.value = "";
+        }}
+      />
       {error ? (
         <span
           className="max-w-64 text-[11px] text-destructive whitespace-normal break-words"
@@ -252,6 +361,49 @@ export function ExportButton() {
           <DropdownMenuItem disabled={busy} onSelect={() => void handleExportProject()}>
             <FolderArchive className="size-4" />
             Проект (JSON)
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={busy}
+            onSelect={() => void handleArchiveExport()}
+          >
+            <FolderArchive className="size-4" />
+            Архив проекта (tar.gz, бэкенд)
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={!activeModel || busy}
+            onSelect={() => void handleCodegen("rust")}
+          >
+            <FileJson className="size-4" />
+            Код парсера (Rust, бэкенд)
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!activeModel || busy}
+            onSelect={() => void handleCodegen("python")}
+          >
+            <FileJson className="size-4" />
+            Код парсера (Python, бэкенд)
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!activeModel || busy}
+            onSelect={() => void handleCodegen("c")}
+          >
+            <FileJson className="size-4" />
+            Код парсера (C, бэкенд)
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={busy} onSelect={handleBackendReport}>
+            <FileText className="size-4" />
+            Отчёт бэкенда (с откатом)
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={busy}
+            onSelect={() => {
+              archiveInputRef.current?.click();
+            }}
+          >
+            <Upload className="size-4" />
+            Импорт архива (tar.gz, бэкенд)
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

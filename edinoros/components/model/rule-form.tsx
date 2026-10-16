@@ -20,27 +20,17 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createId } from "@/src/lib/ids";
+import { FIELD_TYPES, validateTermEquals } from "@/src/lib/field-types";
 import { MODEL_HELP } from "@/src/lib/model-help";
 import { applyModelToBytes } from "@/src/lib/parse";
 import { useAppStore } from "@/src/store/app";
 import type {
+  ConditionTerm,
   MessageField,
   Model,
   ModelField,
   ModelRule,
 } from "@/src/types/domain";
-
-const FIELD_TYPES = [
-  "uint8",
-  "uint16be",
-  "uint32be",
-  "int8",
-  "int16be",
-  "int32be",
-  "bytes",
-  "string",
-  "hex",
-] as const;
 
 const PARSE_STATUS_LABEL = {
   parsed: "разобрано",
@@ -70,7 +60,17 @@ interface RuleDraft {
   name: string;
   opcodesText: string;
   maxLenText: string;
+  msgLenText: string;
+  terms: TermDraft[];
   fields: FieldDraft[];
+}
+
+/** Черновик кастомного условия: срез по смещению равен значению. */
+interface TermDraft {
+  key: string;
+  offsetText: string;
+  type: string;
+  equals: string;
 }
 
 function formatOpcode(value: number): string {
@@ -89,6 +89,16 @@ function ruleToDraft(rule: ModelRule): RuleDraft {
       rule.condition.maxMessageLength !== undefined
         ? String(rule.condition.maxMessageLength)
         : "",
+    msgLenText:
+      rule.condition.messageLength !== undefined
+        ? String(rule.condition.messageLength)
+        : "",
+    terms: (rule.condition.terms ?? []).map((term) => ({
+      key: createId("td"),
+      offsetText: String(term.offset),
+      type: term.type,
+      equals: term.equals,
+    })),
     fields: rule.fields.map((field) => ({
       key: createId("fd"),
       name: field.name,
@@ -158,6 +168,31 @@ function draftToRule(
     }
   }
 
+  let messageLength: number | undefined;
+  if (draft.msgLenText.trim() !== "") {
+    const parsed = parseStrictInt(draft.msgLenText);
+    if (parsed.error || parsed.value === null || parsed.value <= 0) {
+      errors.msgLen = "положительное число";
+    } else {
+      messageLength = parsed.value;
+    }
+  }
+
+  const terms: ConditionTerm[] = [];
+  for (const term of draft.terms) {
+    const parsed = parseStrictInt(term.offsetText);
+    if (parsed.error || parsed.value === null) {
+      errors[`term:${term.key}`] = "смещение — целое ≥ 0";
+      continue;
+    }
+    const equalsError = validateTermEquals(term.type, term.equals);
+    if (equalsError !== null) {
+      errors[`term:${term.key}`] = equalsError;
+      continue;
+    }
+    terms.push({ offset: parsed.value, type: term.type, equals: term.equals.trim() });
+  }
+
   const fields: ModelField[] = [];
   for (const field of draft.fields) {
     const fieldErrors: string[] = [];
@@ -207,9 +242,13 @@ function draftToRule(
   delete condition.opcode;
   delete condition.opcodes;
   delete condition.maxMessageLength;
+  delete condition.messageLength;
+  delete condition.terms;
   if (opcodes.length === 1) condition.opcode = opcodes[0];
   else if (opcodes.length > 1) condition.opcodes = opcodes;
   if (maxMessageLength !== undefined) condition.maxMessageLength = maxMessageLength;
+  if (messageLength !== undefined) condition.messageLength = messageLength;
+  if (terms.length > 0) condition.terms = terms;
 
   return {
     rule: { id: original.id, name: draft.name.trim(), condition, fields },
@@ -618,10 +657,144 @@ export function RuleForm({
                 {errors.maxLen}
               </p>
             ) : null}
+            <div className="flex items-center gap-2">
+              <span className="w-28 shrink-0 text-xs">messageLength</span>
+              <Input
+                value={draft.msgLenText}
+                onChange={(event) =>
+                  commitDraft({ ...draft, msgLenText: event.target.value })
+                }
+                placeholder="—"
+                title={MODEL_HELP.messageLength}
+                className="h-7 font-mono text-xs"
+              />
+            </div>
+            {errors.msgLen ? (
+              <p className="pl-28 text-[10px] text-destructive">
+                {errors.msgLen}
+              </p>
+            ) : null}
             {draft.opcodesText.trim() === "" &&
-            draft.maxLenText.trim() === "" ? (
+            draft.maxLenText.trim() === "" &&
+            draft.msgLenText.trim() === "" &&
+            draft.terms.length === 0 ? (
               <p className="text-xs text-muted-foreground">Всегда (fallback)</p>
             ) : null}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                Условия по байтам ({draft.terms.length})
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-1.5 text-[11px]"
+                onClick={() =>
+                  commitDraft({
+                    ...draft,
+                    terms: [
+                      ...draft.terms,
+                      { key: createId("td"), offsetText: "0", type: "uint8", equals: "" },
+                    ],
+                  })
+                }
+              >
+                <Plus className="size-3" />
+                Добавить условие
+              </Button>
+            </div>
+            {draft.terms.map((term, index) => {
+              const termError = errors[`term:${term.key}`];
+              return (
+                <div
+                  key={term.key}
+                  className={cn(
+                    "flex flex-col gap-1 rounded border p-2",
+                    termError ? "border-destructive/50" : "border-border",
+                  )}
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="w-4 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    <Input
+                      value={term.offsetText}
+                      onChange={(event) =>
+                        commitDraft({
+                          ...draft,
+                          terms: draft.terms.map((item) =>
+                            item.key === term.key
+                              ? { ...item, offsetText: event.target.value }
+                              : item,
+                          ),
+                        })
+                      }
+                      placeholder="смещение"
+                      title={MODEL_HELP.termOffset}
+                      className="h-7 w-20 font-mono text-xs"
+                    />
+                    <Select
+                      value={term.type}
+                      onValueChange={(value) =>
+                        commitDraft({
+                          ...draft,
+                          terms: draft.terms.map((item) =>
+                            item.key === term.key ? { ...item, type: value } : item,
+                          ),
+                        })
+                      }
+                      onOpenChange={setOverlayOpen}
+                    >
+                      <SelectTrigger size="sm" className="w-28 text-xs" title={MODEL_HELP.fieldType}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {FIELD_TYPES.map((item) => (
+                          <SelectItem key={item} value={item}>
+                            {item}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={term.equals}
+                      onChange={(event) =>
+                        commitDraft({
+                          ...draft,
+                          terms: draft.terms.map((item) =>
+                            item.key === term.key
+                              ? { ...item, equals: event.target.value }
+                              : item,
+                          ),
+                        })
+                      }
+                      placeholder="значение: 0x01, 25, Lab, AA 55"
+                      title={MODEL_HELP.termEquals}
+                      className="h-7 flex-1 font-mono text-xs"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto size-6 shrink-0"
+                      title="Удалить условие"
+                      onClick={() =>
+                        commitDraft({
+                          ...draft,
+                          terms: draft.terms.filter((item) => item.key !== term.key),
+                        })
+                      }
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  </div>
+                  {termError ? (
+                    <p className="pl-6 text-[10px] text-destructive">{termError}</p>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
 
           <div className="flex flex-col gap-2">

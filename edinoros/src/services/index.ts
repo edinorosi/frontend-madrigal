@@ -14,3 +14,12 @@ import { httpService } from "@/src/services/httpService";
 export const appService: AppService = process.env.NEXT_PUBLIC_API_URL
   ? httpService
   : mockService;
+
+/**
+ * true — фронт говорит с бэкендом по HTTP (задан NEXT_PUBLIC_API_URL).
+ * Используется там, где UI выбирает серверный путь с откатом на локальный:
+ * apply через POST apply-model, отчёт/архив/codegen бэкенда.
+ */
+export function isBackendMode(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_API_URL);
+}

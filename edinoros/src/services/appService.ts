@@ -82,4 +82,62 @@ export interface AppService {
    * параметрами, кластеризация по опкоду, поля с evidence совпадений.
    */
   inferModel(captureId: string): Promise<InferResult>;
+
+  /**
+   * Сгенерированный бэкендом декодер модели (R6, повторное использование).
+   * Бэк: GET /api/v1/models/:id/codegen?lang=rust|python|c.
+   * В мок-режиме недоступно — кидает ошибку, UI откатывается на локальный экспорт.
+   */
+  getModelCode(
+    modelId: string,
+    lang: CodegenLang,
+  ): Promise<CodegenResult>;
+
+  /**
+   * Отчёт бэкенда (R6): требует предварительно выполненной проверки
+   * (POST /check) для этой записи, иначе бэк вернёт 404 и UI откатится
+   * на локальный buildReportMarkdown.
+   */
+  generateBackendReport(
+    captureId: string,
+    projectName: string,
+  ): Promise<string>;
+
+  /**
+   * Архив проекта бэкенда (tar.gz с rules.json/manifest.json/pcap).
+   * Формат отличается от JSON-снимка проекта (тот остаётся основным
+   * переносимым форматом R5) — это дополнительный архив для бэкенда.
+   */
+  exportProjectArchive(args: ProjectArchiveRequest): Promise<Uint8Array>;
+
+  /**
+   * Импорт tar.gz-архива бэкенда (pcap внутри). Возвращает id
+   * импортированных записей и число пропущенных файлов.
+   */
+  importProjectArchive(file: File): Promise<ProjectArchiveImportResult>;
+}
+
+/** Язык генератора декодера бэкенда. */
+export type CodegenLang = "rust" | "python" | "c";
+
+/** Декодер, сгенерированный бэкендом. */
+export interface CodegenResult {
+  lang: string;
+  filename: string;
+  code: string;
+}
+
+/** Запрос архива проекта бэкенда. */
+export interface ProjectArchiveRequest {
+  projectName: string;
+  /** Правила модели (сериализованные ModelRule[]). */
+  rules: unknown;
+  /** Пути pcap на стороне сервера; фронт их не знает — обычно []. */
+  files: string[];
+}
+
+/** Итог импорта tar.gz-архива. */
+export interface ProjectArchiveImportResult {
+  imported: string[];
+  skipped: number;
 }

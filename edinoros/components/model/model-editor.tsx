@@ -71,6 +71,11 @@ function describeCondition(condition: ModelRule["condition"]): string {
   if (condition.messageLength !== undefined) {
     parts.push(`длина сообщения = ${condition.messageLength} Б`);
   }
+  if (condition.terms !== undefined && condition.terms.length > 0) {
+    parts.push(
+      condition.terms.map((term) => `[${term.offset}] ${term.type} = ${term.equals}`).join("; "),
+    );
+  }
   if (condition.maxMessageLength !== undefined) {
     parts.push(`длина ≤ ${condition.maxMessageLength} Б`);
   }

@@ -390,7 +390,9 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       // привязан к записи, но её нет в сервисе. Иначе восстанавливаемся
       // из снимка — без обращения к бэкенду.
       if (emptySnapshot || needsCapture) {
-        await useAppStore.getState().loadProject();
+        // selectFirst=false: не показываем первую запись из списка,
+        // сразу целимся в запись проекта (иначе вспышка чужих данных).
+        await useAppStore.getState().loadProject(false);
 
         if (needsCapture) {
           // Запись проекта может не найтись в сервисе (например, после
@@ -406,6 +408,13 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
               : undefined;
           if (target && state.activeCaptureId !== target.id) {
             await useAppStore.getState().selectCapture(target.id);
+          } else if (!target) {
+            // Запись проекта не нашлась: fallback на первую, но осознанно
+            // и один раз — без промежуточной вспышки чужой записи.
+            const fallback = useAppStore.getState().captures[0];
+            if (fallback && useAppStore.getState().activeCaptureId !== fallback.id) {
+              await useAppStore.getState().selectCapture(fallback.id);
+            }
           }
         }
       } else {

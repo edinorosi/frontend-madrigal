@@ -206,11 +206,22 @@ export type ModelStatus = "draft" | "checked" | "stale";
  */
 export interface ModelField {
   name: string;
-  /** uint8, uint16be, uint32be, bytes, string. */
+  /** Тип из реестра field-types: uint8/int8, uint16/int16/uint32/int32 + be/le, bytes, string, hex. */
   type: string;
   offset: number | "end-2";
   length: number | "rest" | "rest-2";
   note?: string;
+}
+
+/**
+ * Кастомное условие: срез `type` по смещению `offset` равен `equals`.
+ * Числа — десятичные или 0x; string — как есть; bytes/hex — hex-пары.
+ * Все terms AND-ятся с остальными полями условия.
+ */
+export interface ConditionTerm {
+  offset: number;
+  type: string;
+  equals: string;
 }
 
 /**
@@ -235,6 +246,8 @@ export interface ModelRule {
     maxMessageLength?: number;
     /** Точная длина сообщения в байтах — различает правила с одним опкодом. */
     messageLength?: number;
+    /** Кастомные условия: срезы байтов равны заданным значениям (AND). */
+    terms?: ConditionTerm[];
   };
   fields: ModelField[];
 }

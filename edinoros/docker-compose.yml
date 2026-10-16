@@ -7,8 +7,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ../../backend-madrigal/data:/app/data
-      - ../../backend-madrigal/uploads:/app/uploads
+      # :Z — на Fedora/RHEL контейнер (container_t) без метки не может писать
+      # в user_home_t/tmp_t; без него данные проекта не сохраняются на диск.
+      - ../../backend-madrigal/data:/app/data:Z
+      - ../../backend-madrigal/uploads:/app/uploads:Z
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/healthz"]

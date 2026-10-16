@@ -20,6 +20,7 @@ import { formatBytes, formatClock, formatTuple } from "@/src/lib/format";
 import { resolveMessageModel } from "@/src/lib/message-model";
 import { applyModelCached } from "@/src/lib/parse";
 import { useAppStore } from "@/src/store/app";
+import { useProjectsStore } from "@/src/store/projects";
 import type { Direction, ParseStatus } from "@/src/types/domain";
 
 const DIRECTION_LABEL: Record<Direction, string> = {
@@ -63,6 +64,8 @@ export function WorkArea() {
 
   const appError = useAppStore((state) => state.error);
   const loadProject = useAppStore((state) => state.loadProject);
+  const activeProjectId = useProjectsStore((state) => state.activeProjectId);
+  const clearProject = useProjectsStore((state) => state.clearProject);
   /**
    * Текст скрытой ошибки, а не булев флаг: при повторной загрузке ошибка
    * та же — баннер не показываем, при новой (другой текст) — показываем.
@@ -312,6 +315,15 @@ export function WorkArea() {
           >
             Повторить
           </Button>
+          {activeProjectId ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => clearProject(activeProjectId)}
+            >
+              Очистить
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="ghost"

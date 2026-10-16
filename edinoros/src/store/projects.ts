@@ -15,6 +15,7 @@ import { downloadJson } from "@/src/lib/export/download";
 import {
   buildProjectExport,
   captureRefOf,
+  normalizeProjectData,
   parseProjectExport,
   projectFileName,
   type ProjectExportFile,
@@ -67,6 +68,11 @@ interface ProjectsState {
   openDemo: () => Promise<void>;
   /** Открытие проекта: сброс рабочей зоны, загрузка, применение снимка. */
   openProject: (id: string) => Promise<void>;
+  /**
+   * Очистка повреждённого проекта (кнопка [Очистить] на баннере 404):
+   * удаляется только тело проекта, рабочая зона гаснет до «Проект не загружен».
+   */
+  clearProject: (id: string) => void;
   /** Возврат к списку: автосохранение снимка проекта. */
   backToProjects: () => Promise<void>;
   deleteProject: (id: string) => void;
@@ -76,6 +82,27 @@ interface ProjectsState {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : "Неизвестная ошибка";
+}
+
+/**
+ * Нормализация снимка перед открытием: id записей снимка могут уже
+ * отсутствовать в сервисе (файл переимпортировали под новым id, данные
+ * бэкенда очистили). Доступные id берём из listCaptures(). Сбой списка
+ * (бэкенд недоступен) снимок не трогает — открытие покажет ошибку связи.
+ */
+async function normalizeSnapshot(
+  data: ProjectExportFile | null,
+): Promise<ProjectExportFile | null> {
+  if (data === null) return null;
+  try {
+    const captures = await appService.listCaptures();
+    return normalizeProjectData(
+      data,
+      captures.map((item) => item.id),
+    );
+  } catch {
+    return data;
+  }
 }
 
 function byUpdatedDesc(left: ProjectMeta, right: ProjectMeta): number {
@@ -375,7 +402,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     set({ busy: true, error: null, activeProjectId: id, view: "workspace" });
 
     try {
-      const data = record.data;
+      const data = await normalizeSnapshot(record.data);
       const emptySnapshot = data === null || isEmptySnapshot(data);
       const needsCapture = Boolean(
         data?.capture ?? record.meta.meta.fileName,
@@ -432,6 +459,16 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     } finally {
       set({ busy: false });
     }
+  },
+
+  clearProject(id) {
+    // Только тело проекта: индекс (список) не трогаем — запись остаётся.
+    removeRecord(id);
+    // Рабочая зона гаснет до «Проект не загружен». Ошибку снимаем вручную:
+    // resetProject её намеренно не сбрасывает, иначе баннер вернётся.
+    useAppStore.getState().resetProject();
+    useAppStore.setState({ error: null });
+    set({ error: null });
   },
 
   async backToProjects() {

@@ -7,6 +7,7 @@
  */
 import { create } from "zustand";
 import { appService } from "@/src/services";
+import { HttpServiceError } from "@/src/services/httpService";
 import { resolveMessageModel } from "@/src/lib/message-model";
 import { invalidateApplyCache } from "@/src/lib/parse";
 import { applyViaServiceOrLocal } from "@/src/lib/apply";
@@ -388,6 +389,20 @@ interface AppState {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : "Неизвестная ошибка";
+}
+
+/**
+ * 404 именно по записи: сервис вернул «Capture not found» на listSessions.
+ * Это не ошибка связи, а устаревшая ссылка на запись (файл переимпортирован
+ * или данные бэкенда очищены). Другие 404 (например, «сообщение не найдено»)
+ * сюда не попадают — их по-прежнему показывает баннер.
+ */
+function isCaptureNotFound(error: unknown): boolean {
+  return (
+    error instanceof HttpServiceError &&
+    error.status === 404 &&
+    error.message.includes("Capture not found")
+  );
 }
 
 /**
@@ -861,6 +876,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } catch (error) {
       if (token !== requestToken) return;
+      // Устаревшая ссылка на запись: гасим выбор записи и всё, что от неё
+      // зависит, без баннера — иначе 404 «залипает» до перезагрузки.
+      if (isCaptureNotFound(error)) {
+        get().stopCompare();
+        set({
+          activeCaptureId: null,
+          sessions: [],
+          activeSessionId: null,
+          messages: [],
+          activeMessageId: null,
+          messagesError: null,
+          bytes: null,
+          bytesError: null,
+          observations: [],
+          selection: null,
+          hoveredFieldId: null,
+          journalCount: null,
+          loading: NO_LOADING,
+          error: null,
+        });
+        return;
+      }
       set((state) => ({
         loading: { ...state.loading, sessions: false },
         error: describeError(error),

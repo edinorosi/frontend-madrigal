@@ -131,6 +131,33 @@ function replaceActive(models: Model[], active: Model): Model[] {
 }
 
 /**
+ * Приводит снимок проекта к записям, реально существующим в сервисе.
+ *
+ * Записи снимка (`captures[]`) фильтруются по `availableCaptureIds`,
+ * активная выбирается по `active.captureId`, иначе — первая из оставшихся.
+ * Если не осталось ни одной, `capture = null` и `captures = []` — сигнал
+ * открыть проект с пустым выбором, не обращаясь к пропавшей записи (иначе
+ * `listSessions` вернул бы 404 «Capture not found»).
+ *
+ * При разборе файла доступными считаются id самого файла (проверка
+ * структуры); при открытии проекта — id из `listCaptures()`.
+ */
+export function normalizeProjectData(
+  data: ProjectExportFile,
+  availableCaptureIds: readonly string[],
+): ProjectExportFile {
+  const available = new Set(availableCaptureIds);
+  const captures = (data.captures ?? []).filter((item) =>
+    available.has(item.id),
+  );
+  const capture =
+    captures.find((item) => item.id === data.active.captureId) ??
+    captures[0] ??
+    null;
+  return { ...data, capture, captures };
+}
+
+/**
  * Разбор и валидация файла проекта. Бросает Error с русским сообщением.
  * Идентификаторы сохраняются как есть: импорт проекта восстанавливает
  * состояние, а не создаёт копии.
@@ -222,17 +249,11 @@ export function parseProjectExport(raw: string): ProjectExportFile {
     captures = list;
   }
 
-  // Активная запись восстанавливается из списка по active.captureId;
-  // без него (старые файлы) — первая из списка. capture: null только
-  // если список пуст: applyProjectData и openProject опираются на это поле.
-  const capture: ProjectExportFile["capture"] =
-    captures !== undefined && captures.length > 0
-      ? (captures.find((item) => item.id === activeCaptureId) ??
-        captures[0] ??
-        null)
-      : null;
-
-  return {
+  // Активная запись и состав списка восстанавливаются нормализацией по
+  // доступным записям (для файла — по его собственному списку captures[]):
+  // capture по active.captureId, иначе — первая; null — список пуст.
+  // Старый файл без captures[] так же остаётся без записи (capture = null).
+  const parsed: ProjectExportFile = {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     metadata: {
       exportedAt:
@@ -242,13 +263,18 @@ export function parseProjectExport(raw: string): ProjectExportFile {
           : new Date().toISOString(),
       author: null,
     },
-    capture,
+    capture: null,
     active,
     models,
     observations,
     checkResult,
     ...(captures !== undefined ? { captures } : {}),
   };
+
+  return normalizeProjectData(
+    parsed,
+    captures?.map((item) => item.id) ?? [],
+  );
 }
 
 function parseModel(raw: unknown, index: number): Model {

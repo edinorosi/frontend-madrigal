@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -47,7 +54,11 @@ import {
   MODEL_STATUS_LABEL,
   MODEL_STATUS_TONE,
 } from "@/src/lib/model-status";
-import { useAppStore } from "@/src/store/app";
+import {
+  useAppStore,
+  MODELS_PANEL_WIDTH_KEY,
+  RULES_PANEL_WIDTH_KEY,
+} from "@/src/store/app";
 import type { Model, ModelRule, ModelStatus } from "@/src/types/domain";
 import { RuleForm } from "@/components/model/rule-form";
 import { ModelGuideDialog } from "@/components/model/model-guide-dialog";
@@ -133,6 +144,72 @@ function ModelStatusDropdown({
   );
 }
 
+/**
+ * Drag правой границы панели редактора: pointer capture, ширина пишется один
+ * раз за кадр (rAF), без слушателей на window — по образцу sidebar-panel.
+ */
+function usePanelDrag(value: number, onChange: (px: number) => void) {
+  const startRef = useRef<{ x: number; value: number } | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const xRef = useRef(0);
+  const [resizing, setResizing] = useState(false);
+
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    startRef.current = { x: event.clientX, value };
+    xRef.current = event.clientX;
+    setResizing(true);
+  };
+
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (startRef.current === null) return;
+    xRef.current = event.clientX;
+    if (frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      const start = startRef.current;
+      if (start === null) return;
+      onChange(start.value + (xRef.current - start.x));
+    });
+  };
+
+  const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const start = startRef.current;
+    if (start === null) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    startRef.current = null;
+    onChange(start.value + (event.clientX - start.x));
+    requestAnimationFrame(() => setResizing(false));
+  };
+
+  return { resizing, onPointerDown, onPointerMove, onPointerUp };
+}
+
+type PanelDrag = ReturnType<typeof usePanelDrag>;
+
+/** Разделитель-хэндл между зонами редактора: линия в покое, акцент на hover. */
+function PanelHandle({ drag, label }: { drag: PanelDrag; label: string }) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      tabIndex={-1}
+      onPointerDown={drag.onPointerDown}
+      onPointerMove={drag.onPointerMove}
+      onPointerUp={drag.onPointerUp}
+      onPointerCancel={drag.onPointerUp}
+      className="relative w-1 shrink-0 cursor-col-resize select-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-border before:transition-colors before:content-[''] hover:before:bg-ring"
+    />
+  );
+}
+
 export function ModelEditor() {
   const closeModelEditor = useAppStore((state) => state.closeModelEditor);
   const overlayOpen = useAppStore((state) => state.overlayOpen);
@@ -157,6 +234,13 @@ export function ModelEditor() {
     (state) => state.applyCaptureSummary,
   );
   const applyCaptureError = useAppStore((state) => state.applyCaptureError);
+
+  const modelsPanelWidth = useAppStore((state) => state.modelsPanelWidth);
+  const rulesPanelWidth = useAppStore((state) => state.rulesPanelWidth);
+  const setModelsPanelWidth = useAppStore((state) => state.setModelsPanelWidth);
+  const setRulesPanelWidth = useAppStore((state) => state.setRulesPanelWidth);
+  const modelsDrag = usePanelDrag(modelsPanelWidth, setModelsPanelWidth);
+  const rulesDrag = usePanelDrag(rulesPanelWidth, setRulesPanelWidth);
 
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -197,6 +281,46 @@ export function ModelEditor() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [overlayOpen, menu, closeModelEditor, setOverlayOpen]);
+
+  // Ширины панелей сохраняются в localStorage с debounce (~175 мс), а не на
+  // каждый кадр drag: set*PanelWidth меняют только состояние стора.
+  const persistModelsRef = useRef(false);
+  useEffect(() => {
+    if (!persistModelsRef.current) {
+      persistModelsRef.current = true;
+      return;
+    }
+    const id = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          MODELS_PANEL_WIDTH_KEY,
+          String(modelsPanelWidth),
+        );
+      } catch {
+        // Приватный режим/лимит хранилища — ширина просто не сохранится.
+      }
+    }, 175);
+    return () => window.clearTimeout(id);
+  }, [modelsPanelWidth]);
+
+  const persistRulesRef = useRef(false);
+  useEffect(() => {
+    if (!persistRulesRef.current) {
+      persistRulesRef.current = true;
+      return;
+    }
+    const id = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          RULES_PANEL_WIDTH_KEY,
+          String(rulesPanelWidth),
+        );
+      } catch {
+        // Приватный режим/лимит хранилища — ширина просто не сохранится.
+      }
+    }, 175);
+    return () => window.clearTimeout(id);
+  }, [rulesPanelWidth]);
 
   const closeMenu = useCallback(() => {
     setMenu(null);
@@ -775,8 +899,14 @@ export function ModelEditor() {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex w-56 shrink-0 flex-col border-r">
+      <div className="flex min-h-0 min-w-[360px] flex-1">
+        <aside
+          style={{ width: modelsPanelWidth }}
+          className={cn(
+            "flex shrink-0 flex-col",
+            !modelsDrag.resizing && "transition-[width] duration-200",
+          )}
+        >
           <div className="flex h-9 shrink-0 items-center justify-between border-b px-3">
             <span className="text-xs font-medium text-muted-foreground">
               Модели
@@ -872,7 +1002,15 @@ export function ModelEditor() {
           </ScrollArea>
         </aside>
 
-        <section className="flex w-80 shrink-0 flex-col border-r">
+        <PanelHandle drag={modelsDrag} label="Изменить ширину списка моделей" />
+
+        <section
+          style={{ width: rulesPanelWidth }}
+          className={cn(
+            "flex shrink-0 flex-col",
+            !rulesDrag.resizing && "transition-[width] duration-200",
+          )}
+        >
           <div className="flex h-9 shrink-0 items-center justify-between border-b px-3">
             <span className="text-xs font-medium text-muted-foreground">
               Правила
@@ -952,6 +1090,8 @@ export function ModelEditor() {
             })}
           </ScrollArea>
         </section>
+
+        <PanelHandle drag={rulesDrag} label="Изменить ширину списка правил" />
 
         <section className="flex min-w-0 flex-1 flex-col">
           {selectedRule && activeModel ? (

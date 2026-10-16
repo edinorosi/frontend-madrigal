@@ -254,6 +254,13 @@ interface AppState {
 
   sidebarTab: SidebarTab;
   sidebarCollapsed: boolean;
+  /** Ширина сайдбара (px), перетаскивается вручную. */
+  sidebarWidth: number;
+
+  /** Ширина панели «Модели» в редакторе моделей (px), drag хэндлом. */
+  modelsPanelWidth: number;
+  /** Ширина панели «Правила» в редакторе моделей (px), drag хэндлом. */
+  rulesPanelWidth: number;
 
   /** Фильтры списка сообщений — переживают смену таба сайдбара. */
   messageFilter: MessageFilter;
@@ -328,6 +335,12 @@ interface AppState {
   toggleSidebar: () => void;
   /** Явная установка состояния сайдбара (автосвёрт на узких экранах). */
   setSidebarCollapsed: (collapsed: boolean) => void;
+  /** Ширина сайдбара (px); кламп 220–480, сохраняется в localStorage. */
+  setSidebarWidth: (px: number) => void;
+  /** Ширина панели «Модели» (px); кламп 200–400, персист — в компоненте. */
+  setModelsPanelWidth: (px: number) => void;
+  /** Ширина панели «Правила» (px); кламп 240–500, персист — в компоненте. */
+  setRulesPanelWidth: (px: number) => void;
   /** Частичное обновление фильтров сообщений. */
   setMessageFilter: (patch: Partial<MessageFilter>) => void;
   /** Сброс фильтров сообщений в значения по умолчанию. */
@@ -404,6 +417,59 @@ let applyToken = 0;
 let staleCandidateRuleIds = new Set<string>();
 /** Имена правил на момент правки — для текста предупреждения. */
 let staleCandidateRuleNames = new Map<string, string>();
+
+/** Ширина сайдбара (px): границы перетаскивания и значение по умолчанию. */
+const SIDEBAR_WIDTH_MIN = 220;
+const SIDEBAR_WIDTH_MAX = 480;
+const SIDEBAR_WIDTH_DEFAULT = 280;
+/** Ключ localStorage с шириной сайдбара (персист — в sidebar-panel.tsx). */
+export const SIDEBAR_WIDTH_KEY = "edinoros-sidebar-width";
+
+/**
+ * Начальная ширина сайдбара: валидное число из localStorage, иначе 280.
+ * Обращение к localStorage — только в браузере (SSR/статическая генерация).
+ */
+function readStoredSidebarWidth(): number {
+  if (typeof window === "undefined") return SIDEBAR_WIDTH_DEFAULT;
+  const raw = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+  const value = raw === null ? Number.NaN : Number(raw);
+  if (!Number.isFinite(value)) return SIDEBAR_WIDTH_DEFAULT;
+  return Math.min(Math.max(Math.round(value), SIDEBAR_WIDTH_MIN), SIDEBAR_WIDTH_MAX);
+}
+
+/** Ключи localStorage с ширинами панелей редактора моделей. */
+export const MODELS_PANEL_WIDTH_KEY = "edinoros-models-panel-width";
+export const RULES_PANEL_WIDTH_KEY = "edinoros-rules-panel-width";
+/** Ширина панели «Модели» (px): дефолт и границы перетаскивания. */
+const MODELS_PANEL_WIDTH_DEFAULT = 280;
+const MODELS_PANEL_WIDTH_MIN = 200;
+const MODELS_PANEL_WIDTH_MAX = 400;
+/** Ширина панели «Правила» (px): дефолт и границы перетаскивания. */
+const RULES_PANEL_WIDTH_DEFAULT = 340;
+const RULES_PANEL_WIDTH_MIN = 240;
+const RULES_PANEL_WIDTH_MAX = 500;
+
+/** Округлить и зажать ширину панели в границы. */
+function clampPanelWidth(value: number, min: number, max: number): number {
+  return Math.min(Math.max(Math.round(value), min), max);
+}
+
+/**
+ * Начальная ширина панели: валидное число из localStorage, иначе fallback.
+ * Обращение к localStorage — только в браузере (SSR/статическая генерация).
+ */
+function readStoredPanelWidth(
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof window === "undefined") return fallback;
+  const raw = window.localStorage.getItem(key);
+  const value = raw === null ? Number.NaN : Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return clampPanelWidth(value, min, max);
+}
 
 export const useAppStore = create<AppState>((set, get) => ({
   captures: [],
@@ -678,6 +744,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sidebarTab: "sessions",
   sidebarCollapsed: false,
+  sidebarWidth: readStoredSidebarWidth(),
+
+  modelsPanelWidth: readStoredPanelWidth(
+    MODELS_PANEL_WIDTH_KEY,
+    MODELS_PANEL_WIDTH_DEFAULT,
+    MODELS_PANEL_WIDTH_MIN,
+    MODELS_PANEL_WIDTH_MAX,
+  ),
+  rulesPanelWidth: readStoredPanelWidth(
+    RULES_PANEL_WIDTH_KEY,
+    RULES_PANEL_WIDTH_DEFAULT,
+    RULES_PANEL_WIDTH_MIN,
+    RULES_PANEL_WIDTH_MAX,
+  ),
 
   messageFilter: { query: "", direction: "all", status: "all" },
   messageFilterFocusTick: 0,
@@ -1682,6 +1762,38 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSidebarCollapsed(collapsed) {
     set({ sidebarCollapsed: collapsed });
+  },
+
+  setSidebarWidth(px) {
+    // Только состояние: персист в localStorage — отложенным эффектом в панели,
+    // чтобы не писать на каждый кадр во время drag.
+    const width = Math.min(
+      Math.max(Math.round(px), SIDEBAR_WIDTH_MIN),
+      SIDEBAR_WIDTH_MAX,
+    );
+    set({ sidebarWidth: width });
+  },
+
+  setModelsPanelWidth(px) {
+    // Только состояние; персист — debounce-эффектом в редакторе моделей.
+    set({
+      modelsPanelWidth: clampPanelWidth(
+        px,
+        MODELS_PANEL_WIDTH_MIN,
+        MODELS_PANEL_WIDTH_MAX,
+      ),
+    });
+  },
+
+  setRulesPanelWidth(px) {
+    // Только состояние; персист — debounce-эффектом в редакторе моделей.
+    set({
+      rulesPanelWidth: clampPanelWidth(
+        px,
+        RULES_PANEL_WIDTH_MIN,
+        RULES_PANEL_WIDTH_MAX,
+      ),
+    });
   },
 
   setMessageFilter(patch) {

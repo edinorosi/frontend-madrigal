@@ -18,6 +18,10 @@ import type {
   ProjectArchiveImportResult,
   ProjectArchiveRequest,
 } from "@/src/services/appService";
+import type {
+  JournalScope,
+  JournalUploadResult,
+} from "@/src/types/domain";
 import { applyModelToBytes, type ApplyResult } from "@/src/lib/parse";
 import { readMockSettings, recordImportedCapture } from "@/src/services/mock/scenarios";
 import type {
@@ -54,6 +58,100 @@ let models: Model[] = [...(modelsJson as unknown as Model[])];
 
 /** Журнал действий оператора (R4). В моках он один на запись. */
 const actions: Action[] = actionsJson as unknown as Action[];
+
+/**
+ * Журнал, загруженный через фронт (мок importJournal): per-capture и
+ * глобальный. Приоритет как на бэке: per-capture > global > встроенный.
+ */
+const uploadedCaptureJournals = new Map<string, Action[]>();
+let uploadedGlobalJournal: Action[] | null = null;
+
+/** Крошечный quote-aware парсер CSV для мок-загрузки журнала. */
+function splitCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      cells.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function extractJournalValue(parameters: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(parameters);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const record = parsed as Record<string, unknown>;
+    for (const key of ["threshold_c", "count", "period_ms"]) {
+      const value = record[key];
+      if (typeof value === "number") return value;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Разбор текста CSV-журнала в Action[] (ошибки строк пропускаются). */
+function parseJournalCsv(text: string): { parsed: Action[]; skipped: number } {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
+  if (lines.length === 0) return { parsed: [], skipped: 0 };
+  const header = splitCsvLine(lines[0]).map((cell) => cell.trim());
+  const required = [
+    "capture",
+    "session",
+    "action_id",
+    "start_utc",
+    "end_utc",
+    "action",
+    "parameters",
+    "observed_result",
+  ];
+  if (!required.every((col) => header.includes(col))) {
+    throw new Error("В журнале нет обязательных колонок");
+  }
+  const idx = (name: string): number => header.indexOf(name);
+  const parsed: Action[] = [];
+  let skipped = 0;
+  for (const line of lines.slice(1)) {
+    const cells = splitCsvLine(line);
+    if (cells.length < header.length) {
+      skipped += 1;
+      continue;
+    }
+    const startUtc = cells[idx("start_utc")] ?? "";
+    parsed.push({
+      id: cells[idx("action_id")] ?? "",
+      timestamp:
+        startUtc.length >= 19 ? startUtc.slice(11, 19) : startUtc,
+      name: cells[idx("action")] ?? "",
+      description: cells[idx("action")] ?? "",
+      value: extractJournalValue(cells[idx("parameters")] ?? ""),
+      expectedMessageId: null,
+    });
+  }
+  return { parsed, skipped };
+}
 
 const captureBytes = buildCaptureBytes(fixtures);
 
@@ -221,12 +319,40 @@ export const mockService: AppService = {
     return observations.filter((item) => item.messageId === messageId);
   },
 
+  async importJournal(
+    captureId: string | null,
+    file: File,
+    scope: JournalScope,
+  ): Promise<JournalUploadResult> {
+    const { latencyMs } = readMockSettings();
+    await delay(latencyMs);
+    const text = await file.text();
+    const { parsed, skipped } = parseJournalCsv(text);
+    if (parsed.length === 0) {
+      throw new Error("В журнале нет валидных строк");
+    }
+    if (scope === "global" || !captureId) {
+      uploadedGlobalJournal = parsed;
+    } else {
+      uploadedCaptureJournals.set(captureId, parsed);
+    }
+    return {
+      actions: parsed.length,
+      skipped,
+      scope,
+      source: file.name,
+    };
+  },
+
   async listActions(captureId: string) {
     const { scenario, latencyMs } = readMockSettings();
     await delay(latencyMs);
     // captureId нужен бэку; в моке журнал один на запись, а в сценарии
     // «empty» записей нет вообще — значит и журнала нет.
     if (scenario === "empty" || captureId === "") return [];
+    const perCapture = uploadedCaptureJournals.get(captureId);
+    if (perCapture) return perCapture;
+    if (uploadedGlobalJournal) return uploadedGlobalJournal;
     return actions;
   },
 

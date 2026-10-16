@@ -63,7 +63,7 @@ import {
   OBSERVATION_STATUS_LABEL,
   resolveObservationStatus,
 } from "@/src/lib/observations";
-import { useAppStore, type FieldsSource } from "@/src/store/app";
+import { useAppStore } from "@/src/store/app";
 import type {
   InterpretationStatus,
   Message,
@@ -300,8 +300,9 @@ export function InterpretationPanel({
   onRemoveObservation: (observationId: string) => Promise<void>;
 }) {
   const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
+  // Источник полей зафиксирован: только модель (селектор JSON/Модель убран).
+  // Внутреннее состояние fieldsSource держим "model", см. стор.
   const fieldsSource = useAppStore((state) => state.fieldsSource);
-  const setFieldsSource = useAppStore((state) => state.setFieldsSource);
   const bytes = useAppStore((state) => state.bytes);
   const models = useAppStore((state) => state.models);
   const activeModelId = useAppStore((state) => state.activeModelId);
@@ -732,25 +733,13 @@ export function InterpretationPanel({
                     ))}
                   </SelectContent>
                 </Select>
-                <Select
-                  value={fieldsSource}
-                  onValueChange={(value) => setFieldsSource(value as FieldsSource)}
-                  onOpenChange={(open) => setOverlayOpen(open)}
+                <Badge
+                  variant="secondary"
+                  className="h-6 text-[10px]"
+                  title="Поля считаются моделью разбора"
                 >
-                  <SelectTrigger
-                    size="sm"
-                    className="h-6 w-[104px] text-[10px]"
-                    aria-label="Источник полей"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="json">JSON</SelectItem>
-                    <SelectItem value="model" disabled={!messageModel}>
-                      Модель
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                  Модель
+                </Badge>
               </div>
             </div>
             {fieldsSource === "model" && modelApply?.ruleName ? (

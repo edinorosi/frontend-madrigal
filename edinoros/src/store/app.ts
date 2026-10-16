@@ -32,6 +32,7 @@ import type {
   CheckStatus,
   Direction,
   InferResult,
+  JournalScope,
   Message,
   Model,
   Observation,
@@ -343,6 +344,15 @@ interface AppState {
   setImportProgress: (value: number) => void;
   cancelImport: () => void;
   dismissImportError: () => void;
+  /** Загрузка журнала: true — идёт отправка CSV. */
+  journalUploading: boolean;
+  /** Ошибка последней загрузки журнала. */
+  journalError: string | null;
+  /** Успех последней загрузки («Журнал загружен: N действий»). */
+  journalUploadNotice: string | null;
+  /** Загрузить CSV-журнал со скоупом на выбор пользователя. */
+  startJournalImport: (file: File, scope: JournalScope) => Promise<void>;
+  dismissJournalError: () => void;
   resetProject: () => void;
 
   /* ── Экспорт/импорт (R6) ─────────────────────────────────────────── */
@@ -613,6 +623,32 @@ export const useAppStore = create<AppState>((set, get) => ({
         applyCaptureProgress: null,
         applyCaptureSummary: { total, parsed, partial, notParsed },
       });
+      // Бэкенд сохранил поля/статусы у себя — подтягиваем свежие сообщения,
+      // иначе сайдбар, чипы и покрытие показывают старое (unknown).
+      const { activeSessionId, activeMessageId } = get();
+      if (activeSessionId) {
+        try {
+          const loaded = await appService.listMessages(activeSessionId);
+          if (token !== applyToken) return;
+          const { messageModels } = get();
+          set({
+            messages: loaded.map((item) =>
+              messageModels[item.id]
+                ? { ...item, modelId: messageModels[item.id] }
+                : item,
+            ),
+            messagesError: null,
+          });
+          if (
+            activeMessageId &&
+            loaded.some((item) => item.id === activeMessageId)
+          ) {
+            await get().selectMessage(activeMessageId);
+          }
+        } catch {
+          // Обновление вида не должно ронять итог применения.
+        }
+      }
     } catch (error) {
       if (token !== applyToken) return;
       set({
@@ -633,7 +669,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  fieldsSource: "json",
+  // Источник полей зафиксирован: только модель (селектор JSON/Модель убран из UI).
+  fieldsSource: "model",
 
   overlayOpen: false,
 
@@ -651,6 +688,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   importPhase: "idle",
   importProgress: 0,
   importError: null,
+  journalUploading: false,
+  journalError: null,
+  journalUploadNotice: null,
   patternSuggestion: null,
   patternLoading: false,
   inferResult: null,
@@ -1544,9 +1584,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     // Источник полей, привязки сообщений к моделям и последняя проверка.
+    // Селектор JSON/Модель убран: старые снимки с "json" нормализуем в "model".
     checkToken += 1;
     set({
-      fieldsSource: project.active.fieldsSource,
+      fieldsSource: "model",
       messageModels: project.active.messageModels ?? {},
       checkResult: project.checkResult,
       checkError: null,
@@ -1727,6 +1768,66 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ importPhase: "idle", importError: null });
   },
 
+  async startJournalImport(file, scope) {
+    const name = file.name.toLowerCase();
+    if (!name.endsWith(".csv")) {
+      set({
+        journalError: `Не удалось прочитать ${file.name}: нужен файл .csv`,
+        journalUploadNotice: null,
+      });
+      return;
+    }
+    // Потолок бэка — 5 МиБ; проверяем заранее понятной ошибкой.
+    const MAX_JOURNAL_BYTES = 5 * 1024 * 1024;
+    if (file.size > MAX_JOURNAL_BYTES) {
+      set({
+        journalError: `Не удалось прочитать ${file.name}: файл больше 5 МиБ`,
+        journalUploadNotice: null,
+      });
+      return;
+    }
+    // Скоуп «к записи» без активной записи — некуда класть.
+    const targetId = scope === "capture" ? get().activeCaptureId : null;
+    if (scope === "capture" && !targetId) {
+      set({
+        journalError: "Нет активной записи — откройте запись или грузите общий журнал",
+        journalUploadNotice: null,
+      });
+      return;
+    }
+
+    set({ journalUploading: true, journalError: null, journalUploadNotice: null });
+    try {
+      const result = await appService.importJournal(targetId, file, scope);
+      // Журнал сменился — прошлая проверка устарела, счётчик обновляем.
+      const active = get().activeCaptureId;
+      const actions = active
+        ? await appService.listActions(active).catch(() => [])
+        : [];
+      set({
+        journalUploading: false,
+        journalCount: active ? actions.length : get().journalCount,
+        checkResult: null,
+        checkError: null,
+        journalUploadNotice: `Журнал загружен: ${result.actions} действий${result.skipped > 0 ? `, пропущено строк: ${result.skipped}` : ""}`,
+      });
+      // Панель проверки открыта — сразу перепроверяем по новому журналу.
+      if (get().checkOpen && active) {
+        await get().runCheck();
+      }
+    } catch (error) {
+      set({
+        journalUploading: false,
+        journalError: describeError(error),
+        journalUploadNotice: null,
+      });
+    }
+  },
+
+  dismissJournalError() {
+    set({ journalError: null, journalUploadNotice: null });
+  },
+
   async analyzePatterns() {
     const token = ++patternToken;
     const { activeCaptureId, messages } = get();
@@ -1871,13 +1972,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       applyCaptureProgress: null,
       applyCaptureSummary: null,
       applyCaptureError: null,
-      fieldsSource: "json",
+      fieldsSource: "model",
       // error намеренно не сбрасывается: он показывается баннером рабочей
       // области до явного скрытия. Иначе при повторном открытии проекта
       // (ошибка та же) баннер не появится снова.
       importPhase: "idle",
       importProgress: 0,
       importError: null,
+      journalUploading: false,
+      journalError: null,
+      journalUploadNotice: null,
       patternSuggestion: null,
       patternLoading: false,
       inferResult: null,

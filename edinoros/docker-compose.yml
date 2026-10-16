@@ -34,9 +34,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.tauri-build
+    # label=disable: контейнеру не нужен SELinux-релейбл хостовых mount'ов.
+    # С ':z' podman переразмечал весь репозиторий в container_file_t — после этого
+    # dnf/rpm не могли читать собранные .rpm/.deb (см. README, «Если что-то не так»).
+    security_opt:
+      - label=disable
     volumes:
-      - ../../backend-madrigal:/workspace/backend:z
-      - .:/workspace/frontend:z
+      - ../../backend-madrigal:/workspace/backend
+      - .:/workspace/frontend
       - cargo-cache:/root/.cargo
       - node-cache:/workspace/frontend/node_modules
     working_dir: /workspace/frontend

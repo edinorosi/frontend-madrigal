@@ -53,7 +53,8 @@ sudo pacman -S --needed webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg xdot
 | Симптом | Решение |
 |---|---|
 | `no compose.yaml ... found` | команда запущена не из `frontend-madrigal/edinoros` |
-| `Permission denied` при Tauri-сборке (Fedora) | SELinux; в `docker-compose.yml` у mount'ов должен быть `:z` |
+| `Permission denied` при Tauri-сборке (Fedora) | SELinux; у сервиса `tauri-build` должен быть `security_opt: ["label=disable"]` |
+| `dnf`/`rpm`: «not a rpm» после Docker-сборки | файлы помечены `container_file_t` (старый `:z`); ставить из копии: `cp .../bundle/rpm/*.rpm /tmp && sudo dnf install /tmp/*.rpm`, либо снять fcontext-правила и `sudo restorecon -Rv` |
 | `couldn't read ... scripts/protocol-lab-py/...` | устаревший `backend-madrigal`; скрипты — в `backend-madrigal/scripts/` |
 | `pkg-config ... not found` (способ 3) | не установлены системные dev-пакеты (см. выше) |
 

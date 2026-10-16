@@ -35,8 +35,8 @@ services:
       context: .
       dockerfile: Dockerfile.tauri-build
     volumes:
-      - ../../backend-madrigal:/workspace/backend
-      - .:/workspace/frontend
+      - ../../backend-madrigal:/workspace/backend:z
+      - .:/workspace/frontend:z
       - cargo-cache:/root/.cargo
       - node-cache:/workspace/frontend/node_modules
     working_dir: /workspace/frontend

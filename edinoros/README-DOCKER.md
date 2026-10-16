@@ -57,6 +57,7 @@ npx tauri dev
 docker compose down                        # остановить веб
 docker compose --profile tauri-build down  # + контейнер tauri-build
 docker compose down -v                     # удалить volume'ы (в т.ч. data/)
+```
 
 ## Podman
 

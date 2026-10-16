@@ -372,24 +372,10 @@ export function ExportButton() {
           <DropdownMenuSeparator />
           <DropdownMenuItem
             disabled={!activeModel || busy}
-            onSelect={() => void handleCodegen("rust")}
-          >
-            <FileJson className="size-4" />
-            Код парсера (Rust, бэкенд)
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={!activeModel || busy}
             onSelect={() => void handleCodegen("python")}
           >
             <FileJson className="size-4" />
             Код парсера (Python, бэкенд)
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={!activeModel || busy}
-            onSelect={() => void handleCodegen("c")}
-          >
-            <FileJson className="size-4" />
-            Код парсера (C, бэкенд)
           </DropdownMenuItem>
           <DropdownMenuItem disabled={busy} onSelect={handleBackendReport}>
             <FileText className="size-4" />

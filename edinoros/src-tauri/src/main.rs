@@ -84,24 +84,31 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
 
 fn find_sidecar_exe(app: &AppHandle) -> Option<PathBuf> {
     let name = sidecar_file_name();
+    // В установленном пакете externalBin кладётся рядом с бинарём без triple-суффикса
+    // (/usr/bin/protocol-lab-api), поэтому ищем и его тоже.
+    let plain = if cfg!(windows) {
+        format!("{BACKEND_BIN}.exe")
+    } else {
+        BACKEND_BIN.to_string()
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(res) = app.path().resource_dir() {
-        for cand in [res.join("binaries").join(&name), res.join(&name)] {
-            if cand.is_file() {
-                return Some(cand);
-            }
+        candidates.push(res.join("binaries").join(&name));
+        candidates.push(res.join(&name));
+        candidates.push(res.join(&plain));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(&name));
+            candidates.push(dir.join(&plain));
+            candidates.push(dir.join("binaries").join(&name));
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
-        for cand in [
-            cwd.join("binaries").join(&name),
-            cwd.join("..").join("binaries").join(&name),
-        ] {
-            if cand.is_file() {
-                return Some(cand);
-            }
-        }
+        candidates.push(cwd.join("binaries").join(&name));
+        candidates.push(cwd.join("..").join("binaries").join(&name));
     }
-    None
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 fn wait_for_backend() -> bool {

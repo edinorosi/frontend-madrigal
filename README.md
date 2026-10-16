@@ -14,8 +14,8 @@
 | 4 | **Готовый инсталлятор** | Просто установить, без сборки | `src-tauri/target/release/bundle/` |
 
 > **Хакатон-эксперту — способ 1.** Две команды и браузер:
-> ```bash
-> cd frontend-madrigal/edinoros
+> \`\`\`bash
+> cd edinoros
 > docker compose up -d        # веб на http://localhost:3000, API на :8080
 > ```
 > Нужен только Docker (или Podman). Остановить: `docker compose down`.
@@ -57,4 +57,4 @@ sudo pacman -S --needed webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg xdot
 | `couldn't read ... scripts/protocol-lab-py/...` | устаревший `backend-madrigal`; скрипты — в `backend-madrigal/scripts/` |
 | `pkg-config ... not found` (способ 3) | не установлены системные dev-пакеты (см. выше) |
 
-Детали Docker — `README-DOCKER.md`. Контракт фронта и бэка, типы, запреты — `AGENTS.md`.
+Детали Docker — `edinoros/README-DOCKER.md`. Контракт фронта и бэка, типы, запреты — `edinoros/AGENTS.md`.

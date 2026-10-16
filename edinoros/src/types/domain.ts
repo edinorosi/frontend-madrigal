@@ -155,6 +155,17 @@ export interface Action {
   expectedMessageId: string | null;
 }
 
+/** Скоуп загружаемого журнала: к записи или общий. */
+export type JournalScope = "capture" | "global";
+
+/** Итог загрузки журнала через фронт. */
+export interface JournalUploadResult {
+  actions: number;
+  skipped: number;
+  scope: JournalScope;
+  source: string;
+}
+
 /** Итог строки проверки модели. */
 export type CheckStatus = "ok" | "partial" | "unknown" | "error";
 

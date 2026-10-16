@@ -212,7 +212,7 @@ export function emptyProjectData(): ProjectExportFile {
       modelId: null,
       sessionId: null,
       messageId: null,
-      fieldsSource: "json",
+      fieldsSource: "model",
     },
     models: [],
     observations: [],

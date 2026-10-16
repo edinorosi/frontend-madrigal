@@ -18,6 +18,8 @@ import type {
   CheckResult,
   Direction,
   InferResult,
+  JournalScope,
+  JournalUploadResult,
   Message,
   MessageField,
   Model,
@@ -291,6 +293,26 @@ export const httpService: AppService = {
     return requestJson<Action[]>(
       `/api/v1/captures/${encodeURIComponent(captureId)}/actions`,
     );
+  },
+
+  async importJournal(
+    captureId: string | null,
+    file: File,
+    scope: JournalScope,
+  ) {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    if (captureId) {
+      form.append("scope", scope);
+      return requestJson<JournalUploadResult>(
+        `/api/v1/captures/${encodeURIComponent(captureId)}/journal`,
+        { method: "POST", body: form },
+      );
+    }
+    return requestJson<JournalUploadResult>(`/api/v1/journal`, {
+      method: "POST",
+      body: form,
+    });
   },
 
   async checkModel(captureId: string, modelId?: string) {

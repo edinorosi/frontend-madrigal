@@ -4,6 +4,8 @@ import type {
   CheckResult,
   Direction,
   InferResult,
+  JournalScope,
+  JournalUploadResult,
   Message,
   MessageField,
   Model,
@@ -53,6 +55,17 @@ export interface AppService {
    * TODO: реализация на бэке ожидается, мок готов.
    */
   listActions(captureId: string): Promise<Action[]>;
+  /**
+   * Загрузка CSV-журнала через фронт. captureId нужен для scope=capture;
+   * для scope=global запись не обязательна (передаётся null).
+   * Обязательные колонки CSV: capture,session,action_id,start_utc,end_utc,
+   * action,parameters,observed_result. Лимит бэка — 5 МиБ.
+   */
+  importJournal(
+    captureId: string | null,
+    file: File,
+    scope: JournalScope,
+  ): Promise<JournalUploadResult>;
   /**
    * Прогон модели по журналу действий: извлекает значения из разобранных
    * сообщений и сопоставляет с журналом. `modelId` — пока необязательный,

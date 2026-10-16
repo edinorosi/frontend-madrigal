@@ -102,6 +102,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev
 | `removeObservation(id)` | `DELETE /api/v1/observations/:id` | — | 204 |
 | `listObservations(messageId)` | `GET /api/v1/messages/:messageId/observations` | — | `Observation[]` |
 | `listActions(captureId)` | `GET /api/v1/captures/:captureId/actions` | — | `Action[]` |
+| `importJournal(captureId, file, scope)` | `POST /api/v1/captures/:captureId/journal` (scope=capture) или `POST /api/v1/journal` (scope=global) | multipart `file` + поле `scope` | `JournalUploadResult` |
 | `checkModel(captureId, modelId?)` | `POST /api/v1/check` | `{ captureId, modelId? }` | `CheckResult` (rows + summary) |
 | `listModels()` | `GET /api/v1/models` | — | `Model[]` |
 | `saveModel(model)` | `PUT /api/v1/models` | тело `Model` | 204; upsert по `id` |

@@ -447,7 +447,11 @@ export function WorkArea() {
                   Проверка
                 </Button>
               </div>
-            ) : null}
+            ) : (
+              <p className="shrink-0 text-[11px] text-muted-foreground">
+                Нет журнала действий — загрузите CSV кнопкой «Журнал» сверху.
+              </p>
+            )}
 
             {checkOpen ? <CheckPanel escapeDelegated={hexMounted} /> : null}
           </section>

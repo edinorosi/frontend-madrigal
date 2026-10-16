@@ -57,4 +57,40 @@ npx tauri dev
 docker compose down                        # остановить веб
 docker compose --profile tauri-build down  # + контейнер tauri-build
 docker compose down -v                     # удалить volume'ы (в т.ч. data/)
+
+## Podman
+
+На Fedora/RedHat вместо Docker можно использовать Podman. 
+Команды аналогичны, но вместо `docker` используйте `podman`/`podman-compose`.
+
+### Веб-версия
+
+```bash
+cd frontend-madrigal/edinoros
+podman compose up -d        # или podman-compose up -d
+# либо через обёртку ./dev-web.sh — она автоопределит docker/podman
+```
+
+### Сборка Linux Tauri через Podman
+
+```bash
+cd frontend-madrigal/edinoros
+podman compose --profile tauri-build up --build tauri-build
+# либо ./build-tauri-linux.sh
+```
+
+### Остановка
+
+```bash
+podman compose down
+podman compose --profile tauri-build down
+podman compose down -v
+```
+
+### Возможные проблемы
+
+- **npm ci падает в Podman-сборке:** синхронизируйте `package-lock.json` с `package.json`. В проекте фронта корректный lock обязателен. Если локально `npm install` изменил lock — закоммитьте его.
+- **Нет доступа к сети/слоям при первой сборке:** убедитесь, что `podman` настроен, достаточно места в `/var/lib/containers/`.
+- **Порты заняты:** измените маппинг в `docker-compose.yml` при необходимости.
+
 ```
